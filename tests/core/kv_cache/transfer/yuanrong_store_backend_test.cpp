@@ -1,0 +1,189 @@
+/* Copyright 2026 The xLLM Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://github.com/xLLM-AI/xllm/blob/main/LICENSE
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "core/kv_cache/transfer/yuanrong_store_backend.h"
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace xllm {
+namespace {
+
+// The stub bridge is built next to this binary by the test CMakeLists; it
+// implements the xllm_yr_store_* ABI over an in-process map, so the backend's
+// range marshalling and status mapping run against real code.
+YuanRongStoreConfig make_yuanrong_config() {
+  YuanRongStoreConfig config;
+  config.host = "127.0.0.1";
+  config.port = 31501;
+#if defined(XLLM_YUANRONG_BRIDGE_STUB_PATH)
+  config.bridge_path = XLLM_YUANRONG_BRIDGE_STUB_PATH;
+#else
+  config.bridge_path = "/nonexistent/libxllm_yuanrong_store_bridge.so";
+#endif
+  return config;
+}
+
+// A KV block reaches the store as separate K and V ranges, so every case uses
+// two buffers that are not contiguous in memory.
+class BlockPayload {
+ public:
+  BlockPayload(uint8_t key_fill, uint8_t value_fill)
+      : key_range_(64, key_fill), value_range_(32, value_fill) {}
+
+  StoreBuffer buffer() {
+    return StoreBuffer{{key_range_.data(), value_range_.data()},
+                       {key_range_.size(), value_range_.size()}};
+  }
+
+  std::vector<void*> addresses() {
+    return {key_range_.data(), value_range_.data()};
+  }
+
+  void wipe() {
+    std::fill(key_range_.begin(), key_range_.end(), 0);
+    std::fill(value_range_.begin(), value_range_.end(), 0);
+  }
+
+  const std::vector<uint8_t>& key_range() const { return key_range_; }
+  const std::vector<uint8_t>& value_range() const { return value_range_; }
+
+ private:
+  std::vector<uint8_t> key_range_;
+  std::vector<uint8_t> value_range_;
+};
+
+void expect_payload(const BlockPayload& payload,
+                    uint8_t key_fill,
+                    uint8_t value_fill) {
+  EXPECT_EQ(payload.key_range(), std::vector<uint8_t>(64, key_fill));
+  EXPECT_EQ(payload.value_range(), std::vector<uint8_t>(32, value_fill));
+}
+
+TEST(YuanRongStoreBackendTest, FailsWhenTheBridgeCannotBeLoaded) {
+  YuanRongStoreConfig config;
+  config.bridge_path = "/nonexistent/libxllm_yuanrong_store_bridge.so";
+  YuanRongStoreBackend backend(config);
+
+  // A missing bridge must surface as a start-up failure. The alternative --
+  // reporting success and dropping the objects -- would silently disable the
+  // offload tier.
+  EXPECT_FALSE(backend.initialize());
+
+  BlockPayload payload(0x5A, 0x5B);
+  EXPECT_FALSE(backend.get("missing/key", payload.buffer()));
+  const std::vector<uint8_t> statuses =
+      backend.batch_put({"missing/key"}, {payload.buffer()});
+  ASSERT_EQ(statuses.size(), 1U);
+  EXPECT_EQ(statuses[0], 0);
+}
+
+TEST(YuanRongStoreBackendTest, RoundTripsABlockSplitAcrossRanges) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+  // KVCacheStore may register a store more than once; a second call has to
+  // reuse the open client instead of reopening the bridge.
+  EXPECT_TRUE(backend.initialize());
+
+  BlockPayload payload(0x11, 0x22);
+  const std::vector<uint8_t> statuses =
+      backend.batch_put({"model/blk0"}, {payload.buffer()});
+  ASSERT_EQ(statuses.size(), 1U);
+  EXPECT_EQ(statuses[0], 1);
+
+  // Wipe the source so a read-back can only be satisfied from the store.
+  payload.wipe();
+  ASSERT_TRUE(backend.get("model/blk0", payload.buffer()));
+  expect_payload(payload, 0x11, 0x22);
+}
+
+TEST(YuanRongStoreBackendTest, ReportsAStatusPerKeyInOneBatch) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  BlockPayload first(0x01, 0x02);
+  BlockPayload second(0x03, 0x04);
+  const std::vector<uint8_t> statuses = backend.batch_put(
+      {"model/blk0", "model/blk1"}, {first.buffer(), second.buffer()});
+  ASSERT_EQ(statuses.size(), 2U);
+  EXPECT_EQ(statuses[0], 1);
+  EXPECT_EQ(statuses[1], 1);
+
+  first.wipe();
+  second.wipe();
+  ASSERT_TRUE(backend.get("model/blk0", first.buffer()));
+  ASSERT_TRUE(backend.get("model/blk1", second.buffer()));
+  expect_payload(first, 0x01, 0x02);
+  expect_payload(second, 0x03, 0x04);
+}
+
+TEST(YuanRongStoreBackendTest, TreatsAMissingKeyAsAMiss) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  BlockPayload payload(0x00, 0x00);
+  // A miss is the normal outcome when nothing published the prefix; it has to
+  // be reported rather than turned into a zero-filled hit.
+  EXPECT_FALSE(backend.get("model/never-published", payload.buffer()));
+}
+
+TEST(YuanRongStoreBackendTest, TreatsADuplicatePutAsSuccess) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  BlockPayload first(0x77, 0x88);
+  ASSERT_EQ(backend.batch_put({"model/blk0"}, {first.buffer()})[0], 1);
+
+  // The bridge asks for ExistenceOpt::NX, and the SDK counts an existing key as
+  // success without touching the stored value. Re-publishing a block is a no-op
+  // rather than an error; content-addressed keys make the two writes identical
+  // in practice, so this only proves the second write is not an overwrite.
+  BlockPayload second(0x99, 0xAA);
+  const std::vector<uint8_t> duplicate =
+      backend.batch_put({"model/blk0"}, {second.buffer()});
+  ASSERT_EQ(duplicate.size(), 1U);
+  EXPECT_EQ(duplicate[0], 1);
+
+  first.wipe();
+  ASSERT_TRUE(backend.get("model/blk0", first.buffer()));
+  expect_payload(first, 0x77, 0x88);
+}
+
+TEST(YuanRongStoreBackendTest, RejectsMismatchedRangeArrays) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  BlockPayload payload(0xAA, 0xBB);
+  StoreBuffer broken;
+  broken.addresses = payload.addresses();
+  broken.sizes = {payload.key_range().size()};
+
+  const std::vector<uint8_t> statuses =
+      backend.batch_put({"model/blk0"}, {broken});
+  ASSERT_EQ(statuses.size(), 1U);
+  EXPECT_EQ(statuses[0], 0);
+  EXPECT_FALSE(backend.get("model/blk0", broken));
+
+  // The rejected put wrote nothing.
+  EXPECT_FALSE(backend.get("model/blk0", payload.buffer()));
+}
+
+}  // namespace
+}  // namespace xllm

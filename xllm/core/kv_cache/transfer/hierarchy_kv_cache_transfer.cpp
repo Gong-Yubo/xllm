@@ -213,8 +213,14 @@ bool HierarchyKVCacheTransfer::finalize_registration() {
     store_config.kv_split_rank = options_.kv_split_rank();
     store_config.write_enabled = options_.store_write_enabled();
     store_config.enable_mla = options_.enable_mla();
-    LOG(INFO) << "[Mooncake][StoreEngine] initialize, endpoint="
-              << store_local_hostname << ", protocol=" << store_config.protocol
+    store_config.backend = options_.store_backend();
+    store_config.yuanrong_host = options_.store_yuanrong_host();
+    store_config.yuanrong_port = options_.store_yuanrong_port();
+    store_config.yuanrong_timeout_ms = options_.store_yuanrong_timeout_ms();
+    store_config.yuanrong_bridge_path = options_.store_yuanrong_bridge_path();
+    LOG(INFO) << "[KVCacheStore] initialize, backend=" << store_config.backend
+              << ", endpoint=" << store_local_hostname
+              << ", protocol=" << store_config.protocol
               << ", worker_rank=" << options_.store_worker_id()
               << ", tp_rank=" << store_config.tp_rank
               << ", tp_size=" << store_config.tp_size
