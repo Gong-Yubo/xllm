@@ -25,10 +25,10 @@ limitations under the License.
 
 #if defined(USE_NPU) || defined(USE_MLU) || defined(USE_DCU)
 #include "core/kv_cache/transfer/mooncake_kv_cache_transfer.h"
+#endif
 #if defined(USE_YUANRONG_DATASYSTEM)
 #include "core/framework/config/disagg_pd_config.h"
 #include "core/kv_cache/transfer/yuanrong_kv_cache_transfer.h"
-#endif
 #endif
 
 namespace xllm {

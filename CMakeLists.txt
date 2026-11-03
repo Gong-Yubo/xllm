@@ -15,6 +15,32 @@ option(USE_XLITE "Enable xlite NPU backend" OFF)
 option(USE_YUANRONG_DATASYSTEM
        "Build the DataSystem (YuanRong) KV transfer backend" OFF)
 set(YUANRONG_DATASYSTEM_ROOT "" CACHE PATH "DataSystem SDK install prefix")
+if(USE_YUANRONG_DATASYSTEM)
+  add_compile_definitions(USE_YUANRONG_DATASYSTEM)
+
+  if(YUANRONG_DATASYSTEM_ROOT STREQUAL "")
+    message(FATAL_ERROR
+      "Please set -DYUANRONG_DATASYSTEM_ROOT=/path/to/datasystem.")
+  endif()
+
+  find_path(YUANRONG_DATASYSTEM_INCLUDE_DIR
+    NAMES datasystem/hetero_client.h
+    PATHS "${YUANRONG_DATASYSTEM_ROOT}/include"
+    NO_DEFAULT_PATH
+  )
+  find_library(YUANRONG_DATASYSTEM_LIBRARY
+    NAMES datasystem
+    PATHS "${YUANRONG_DATASYSTEM_ROOT}/lib" "${YUANRONG_DATASYSTEM_ROOT}/lib64"
+    NO_DEFAULT_PATH
+  )
+  if(NOT YUANRONG_DATASYSTEM_INCLUDE_DIR OR NOT YUANRONG_DATASYSTEM_LIBRARY)
+    message(FATAL_ERROR
+      "Failed to find the DataSystem SDK under ${YUANRONG_DATASYSTEM_ROOT}. "
+      "Need include/datasystem/hetero_client.h and lib/libdatasystem.so.")
+  endif()
+  get_filename_component(YUANRONG_DATASYSTEM_LIB_DIR
+    "${YUANRONG_DATASYSTEM_LIBRARY}" DIRECTORY)
+endif()
 add_compile_definitions(YLT_ENABLE_IBV)
 add_definitions(-DYLT_ENABLE_IBV)
 set(YLT_ENABLE_IBV ON)
