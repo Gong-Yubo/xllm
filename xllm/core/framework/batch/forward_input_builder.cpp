@@ -423,6 +423,11 @@ TransferKVInfo ForwardInputBuilder::build_step_transfer_info(
         }
         step_mapping.remote_ids.emplace_back(
             full_mapping.remote_ids[remote_idx]);
+        // Content hashes are indexed exactly like remote_ids, so the step
+        // mapping inherits the same slice without extra bookkeeping.
+        if (!full_mapping.hashes.empty()) {
+          step_mapping.hashes.emplace_back(full_mapping.hashes[remote_idx]);
+        }
         remote_idxs.emplace_back(remote_idx);
       }
       if (has_remote_sentinel) {

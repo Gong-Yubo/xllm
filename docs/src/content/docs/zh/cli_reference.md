@@ -204,6 +204,7 @@ VMM 的使用方式和容量配置说明见[KV Cache 与模型权重的虚拟内
 | `disagg_pd_port` | `int32` | `7777` | PD 分离 bRPC server 的监听端口。 |
 | `instance_role` | `string` | `"DEFAULT"` | 当前实例角色，例如 `DEFAULT`、`PREFILL`、`DECODE`、`MIX`。 |
 | `kv_cache_transfer_mode` | `string` | `"PUSH"` | KV Cache 传输模式，例如 `PUSH`、`PULL`。 |
+| `kv_cache_transfer_type` | `string` | `"mooncake"` | KV Cache 传输后端，可选 `mooncake` 或 `datasystem`；`datasystem` 需要以 `USE_YUANRONG_DATASYSTEM` 构建。 |
 | `transfer_listen_port` | `int32` | `26000` | KV Cache Transfer 的监听端口。 |
 | `kv_push_dst_rotate` | `bool` | `false` | 在 `push_kv_blocks` 中按 KV-split rank 轮转遍历目标 worker，用于分散对 decode worker 的流量。 |
 

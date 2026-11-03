@@ -204,6 +204,7 @@ Current support covers ordinary non-PD text inference with prefix caching enable
 | `disagg_pd_port` | `int32` | `7777` | Listening port for the disaggregated PD bRPC server. |
 | `instance_role` | `string` | `"DEFAULT"` | Instance role, for example `DEFAULT`, `PREFILL`, `DECODE`, or `MIX`. |
 | `kv_cache_transfer_mode` | `string` | `"PUSH"` | KV Cache transfer mode, for example `PUSH` or `PULL`. |
+| `kv_cache_transfer_type` | `string` | `"mooncake"` | KV Cache transfer backend, `mooncake` or `datasystem`. `datasystem` requires a build with `USE_YUANRONG_DATASYSTEM`. |
 | `transfer_listen_port` | `int32` | `26000` | Listening port for KV Cache Transfer. |
 | `kv_push_dst_rotate` | `bool` | `false` | Rotate the destination-worker traversal order in `push_kv_blocks` per KV-split rank to spread incast across decode workers. |
 

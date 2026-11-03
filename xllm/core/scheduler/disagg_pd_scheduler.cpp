@@ -37,6 +37,7 @@ limitations under the License.
 #include "core/framework/config/scheduler_config.h"
 #include "core/framework/config/service_config.h"
 #include "core/framework/config/speculative_config.h"
+#include "core/kv_cache/transfer/kv_content_hash.h"
 #include "core/kv_cache/transfer/pd_topology_guard.h"
 #include "core/scheduler/disagg_pd_scheduler.h"
 #include "core/util/scope_guard.h"
@@ -737,6 +738,29 @@ void DisaggPDScheduler::dispatch_requests() {
             mapping.remote_ids.assign(proto_group.ids().begin(),
                                       proto_group.ids().end());
             mapping.remote_shared_num = proto_group.remote_shared_num();
+            const std::string& transfer_type =
+                ::xllm::DisaggPDConfig::get_instance().kv_cache_transfer_type();
+            if ((transfer_type == "datasystem" ||
+                 transfer_type == "yuanrong") &&
+                block_type_from_cache_group_id(mapping.group_id) ==
+                    BlockType::KV) {
+              // Content-addressed publish needs one hash per transferred block.
+              // D omits the prefix it already holds, so remote_ids starts at
+              // remote_shared_num of the full prompt block chain.
+              const std::vector<std::string> block_hashes =
+                  compute_kv_block_hashes(
+                      requests[i]->state().prompt_tokens,
+                      static_cast<uint32_t>(kv_cache_manager_->block_size()),
+                      ::xllm::KVCacheConfig::get_instance()
+                          .xxh3_128bits_seed());
+              const size_t offset = mapping.remote_shared_num;
+              CHECK_LE(offset + mapping.remote_ids.size(), block_hashes.size())
+                  << "DataSystem hash coverage shortage, request_id="
+                  << requests[i]->request_id();
+              mapping.hashes.assign(
+                  block_hashes.begin() + offset,
+                  block_hashes.begin() + offset + mapping.remote_ids.size());
+            }
             info.mappings.emplace_back(std::move(mapping));
           }
           info.dp_rank = resps.resps()[i].dp_rank();
@@ -1306,6 +1330,23 @@ bool DisaggPDScheduler::decode_recv_first_generation(
                    << ", local=" << mapping.local_ids.size()
                    << ", remote=" << mapping.remote_ids.size();
         return false;
+      }
+      const std::string& transfer_type =
+          ::xllm::DisaggPDConfig::get_instance().kv_cache_transfer_type();
+      if ((transfer_type == "datasystem" || transfer_type == "yuanrong") &&
+          block_type.value() == BlockType::KV) {
+        // The publish side starts at remote_shared_num, i.e. at the first block
+        // this sequence does not already hold, so the hashes are the trailing
+        // window of the prompt block chain.
+        const std::vector<std::string> block_hashes = compute_kv_block_hashes(
+            request->state().prompt_tokens,
+            static_cast<uint32_t>(kv_cache_manager_->block_size()),
+            ::xllm::KVCacheConfig::get_instance().xxh3_128bits_seed());
+        CHECK_GE(block_hashes.size(), mapping.local_ids.size())
+            << "DataSystem hash coverage shortage, request_id=" << req_id;
+        mapping.hashes.assign(
+            block_hashes.end() - static_cast<int64_t>(mapping.local_ids.size()),
+            block_hashes.end());
       }
     }
 
