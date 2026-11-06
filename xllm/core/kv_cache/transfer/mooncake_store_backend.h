@@ -36,6 +36,10 @@ struct MooncakeStoreBackendConfig {
   std::string metadata_server;
   std::string master_server_address;
   int32_t replica_num = 1;
+  // Local DRAM the client mounts into the store pool. A zero value makes
+  // setup_real skip MountSegment, leaving the client with no storage capacity,
+  // so KVCacheStore always sizes it from the host cache before calling init.
+  size_t global_segment_size = 0;
 };
 
 class MooncakeStoreBackend final : public KVCacheStoreBackend {
