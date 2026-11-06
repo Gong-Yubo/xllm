@@ -75,6 +75,15 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
   backend_config.metadata_server = config_.metadata_server;
   backend_config.master_server_address = config_.master_server_address;
   backend_config.replica_num = config_.replica_num;
+  // setup_real skips MountSegment when global_segment_size is 0, which leaves
+  // the store with no capacity. Size the segment to the host cache the store
+  // is backing, so a block offloaded to host memory always has room.
+  backend_config.global_segment_size = 0;
+  for (const MooncakeRegisteredRange& range : *ranges) {
+    backend_config.global_segment_size += range.bytes;
+  }
+  LOG(INFO) << "Mooncake Store global segment size: "
+            << backend_config.global_segment_size << " bytes.";
   backend_ = std::make_unique<MooncakeStoreBackend>();
   if (!backend_->init(backend_config, *ranges)) {
     backend_.reset();

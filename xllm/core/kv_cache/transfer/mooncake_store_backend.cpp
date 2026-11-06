@@ -41,7 +41,7 @@ bool MooncakeStoreBackend::init(
     const int setup_result =
         client_ptr_->setup_real(config.localhost_name,
                                 config.metadata_server,
-                                /*global_segment_size=*/0,
+                                config.global_segment_size,
                                 /*local_buffer_size=*/0,
                                 config.protocol,
                                 config.rdma_devices,
