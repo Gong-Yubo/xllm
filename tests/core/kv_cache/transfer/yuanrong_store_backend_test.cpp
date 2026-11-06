@@ -114,6 +114,24 @@ TEST(YuanRongStoreBackendTest, RoundTripsABlockSplitAcrossRanges) {
   expect_payload(payload, 0x11, 0x22);
 }
 
+TEST(YuanRongStoreBackendTest, RoundTripsAKeyWithRawHashBytes) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  // KVCacheStore keys are "xllm-kv-v3:<...>" + 32 raw hash bytes (16 schema +
+  // 16 block content). DataSystem rejects non-ASCII bytes, so the backend hex-
+  // encodes before the bridge. The stub enforces the same charset, so this
+  // test fails if the encoding regresses.
+  std::string binary_key = "xllm-kv-v3:qwen3-32b:main:8:0:0:";
+  binary_key.append("\x00\x01\x02\x03\xfe\xff", 6);
+
+  BlockPayload payload(0x21, 0x43);
+  ASSERT_EQ(backend.batch_put({binary_key}, {payload.buffer()})[0], 1);
+  payload.wipe();
+  ASSERT_TRUE(backend.get(binary_key, payload.buffer()));
+  expect_payload(payload, 0x21, 0x43);
+}
+
 TEST(YuanRongStoreBackendTest, ReportsAStatusPerKeyInOneBatch) {
   YuanRongStoreBackend backend(make_yuanrong_config());
   ASSERT_TRUE(backend.initialize());

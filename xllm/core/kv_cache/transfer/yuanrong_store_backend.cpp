@@ -27,6 +27,22 @@ namespace {
 
 constexpr char kDefaultBridgeLibrary[] = "libxllm_yuanrong_store_bridge.so";
 
+// DataSystem validates keys against ^[a-zA-Z0-9.\-_!@#%^*()+;:]*$ (and a 1024
+// byte cap). KVCacheStore keys are "xllm-kv-v3:<...>" + 32 raw hash bytes
+// (16 schema + 16 block content), so they would be rejected. Hex-encoding the
+// whole key is injective, keeps the prefix and both hashes unambiguous, and is
+// applied to put and get alike, so round trips are unaffected.
+std::string encode_key(const std::string& key) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string encoded;
+  encoded.reserve(key.size() * 2);
+  for (unsigned char byte : key) {
+    encoded.push_back(kHex[byte >> 4]);
+    encoded.push_back(kHex[byte & 0x0F]);
+  }
+  return encoded;
+}
+
 }  // namespace
 
 YuanRongStoreBackend::YuanRongStoreBackend(YuanRongStoreConfig config)
@@ -83,9 +99,14 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_put(
                                           size_storage[index].size()});
   }
 
-  std::vector<const char*> raw_keys;
-  raw_keys.reserve(keys.size());
+  std::vector<std::string> encoded_keys;
+  encoded_keys.reserve(keys.size());
   for (const std::string& key : keys) {
+    encoded_keys.emplace_back(encode_key(key));
+  }
+  std::vector<const char*> raw_keys;
+  raw_keys.reserve(encoded_keys.size());
+  for (const std::string& key : encoded_keys) {
     raw_keys.push_back(key.c_str());
   }
 
@@ -117,7 +138,8 @@ bool YuanRongStoreBackend::get(const std::string& key,
   BridgeBuffer bridge_buffer{
       buffer.addresses.data(), sizes.data(), sizes.size()};
 
-  const char* raw_key = key.c_str();
+  const std::string encoded_key = encode_key(key);
+  const char* raw_key = encoded_key.c_str();
   if (!bridge_mget_(
           bridge_client_, &raw_key, &bridge_buffer, 1, config_.timeout_ms)) {
     LOG(ERROR) << "YuanRong store MGet failed for key " << key << ": "

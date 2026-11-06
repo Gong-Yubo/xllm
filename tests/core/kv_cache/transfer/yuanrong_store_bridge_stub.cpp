@@ -73,6 +73,24 @@ bool flatten(const XllmYrStoreBuffer& buffer, std::string* out) {
   return true;
 }
 
+// DataSystem (>= 9.9.9) rejects keys that contain bytes outside this set, so
+// the stub enforces the same constraint: a regression in the backend's key
+// encoding fails here instead of only on a real worker.
+bool is_legal_key(const std::string& key) {
+  for (unsigned char byte : key) {
+    const bool legal =
+        (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+        (byte >= '0' && byte <= '9') || byte == '.' || byte == '-' ||
+        byte == '_' || byte == '!' || byte == '@' || byte == '#' ||
+        byte == '%' || byte == '^' || byte == '*' || byte == '(' ||
+        byte == ')' || byte == '+' || byte == '=' || byte == ':' || byte == ';';
+    if (!legal) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) void* xllm_yr_store_create(
@@ -97,6 +115,9 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
     return set_error(store, "stub client is null");
   }
   for (size_t index = 0; index < count; ++index) {
+    if (!is_legal_key(keys[index])) {
+      return set_error(store, "illegal char(s)");
+    }
     std::string payload;
     flatten(buffers[index], &payload);
     // ExistenceOpt::NX, as the production bridge asks for: an existing key is
@@ -118,6 +139,9 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     return set_error(store, "stub client is null");
   }
   for (size_t index = 0; index < count; ++index) {
+    if (!is_legal_key(keys[index])) {
+      return set_error(store, "illegal char(s)");
+    }
     const auto found = store->objects.find(keys[index]);
     if (found == store->objects.end()) {
       return set_error(store, "K_NOT_FOUND");
