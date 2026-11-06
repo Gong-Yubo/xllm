@@ -26,22 +26,14 @@ namespace xllm {
 
 MooncakeStoreBackend::~MooncakeStoreBackend() { unregister_ranges(); }
 
-bool MooncakeStoreBackend::init(
-    const MooncakeStoreBackendConfig& config,
-    const std::vector<MooncakeRegisteredRange>& ranges) {
-  const std::optional<std::vector<MooncakeRegisteredRange>> unique =
-      unique_ranges(ranges);
-  if (!unique.has_value()) {
-    LOG(ERROR) << "Invalid Mooncake Host tensor registration ranges.";
-    return false;
-  }
-
+bool MooncakeStoreBackend::init(const MooncakeStoreBackendConfig& config,
+                                const std::vector<StoreRange>& ranges) {
   try {
     client_ptr_ = mooncake::RealClient::create();
     const int setup_result =
         client_ptr_->setup_real(config.localhost_name,
                                 config.metadata_server,
-                                /*global_segment_size=*/0,
+                                config.global_segment_size,
                                 /*local_buffer_size=*/0,
                                 config.protocol,
                                 config.rdma_devices,
@@ -58,36 +50,59 @@ bool MooncakeStoreBackend::init(
       return false;
     }
     rep_config_.replica_num = config.replica_num;
-    registered_ranges_.reserve(unique->size());
-    for (const MooncakeRegisteredRange& range : *unique) {
-      const int register_result =
-          client_ptr_->register_buffer(range.address, range.bytes);
-      if (register_result != 0) {
-        LOG(ERROR) << "Failed to register Mooncake Host tensor: result="
-                   << register_result;
-        unregister_ranges();
-        client_ptr_.reset();
-        return false;
-      }
-      registered_ranges_.emplace_back(range);
-    }
   } catch (const std::exception& error) {
     LOG(ERROR) << "Mooncake RealClient initialization failed: " << error.what();
-    unregister_ranges();
     client_ptr_.reset();
     return false;
   } catch (...) {
     LOG(ERROR) << "Mooncake RealClient initialization failed unexpectedly.";
-    unregister_ranges();
     client_ptr_.reset();
     return false;
+  }
+  return register_ranges(ranges);
+}
+
+bool MooncakeStoreBackend::register_ranges(
+    const std::vector<StoreRange>& ranges) {
+  if (client_ptr_ == nullptr) {
+    LOG(ERROR) << "Mooncake range registration requires an initialized client.";
+    return false;
+  }
+  const std::optional<std::vector<StoreRange>> unique = unique_ranges(ranges);
+  if (!unique.has_value()) {
+    LOG(ERROR) << "Invalid Mooncake Host tensor registration ranges.";
+    return false;
+  }
+
+  registered_ranges_.reserve(unique->size());
+  for (const StoreRange& range : *unique) {
+    int register_result = 0;
+    try {
+      register_result =
+          client_ptr_->register_buffer(range.address, range.bytes);
+    } catch (const std::exception& error) {
+      LOG(ERROR) << "Failed to register Mooncake Host tensor: " << error.what();
+      unregister_ranges();
+      return false;
+    } catch (...) {
+      LOG(ERROR) << "Failed to register Mooncake Host tensor unexpectedly.";
+      unregister_ranges();
+      return false;
+    }
+    if (register_result != 0) {
+      LOG(ERROR) << "Failed to register Mooncake Host tensor: result="
+                 << register_result;
+      unregister_ranges();
+      return false;
+    }
+    registered_ranges_.emplace_back(range);
   }
   return true;
 }
 
 std::vector<uint8_t> MooncakeStoreBackend::batch_put(
     const std::vector<std::string>& keys,
-    const std::vector<MooncakeMultiBuffer>& buffers) {
+    const std::vector<StoreBuffer>& buffers) {
   std::vector<uint8_t> statuses(keys.size(), /*value=*/0);
   if (client_ptr_ == nullptr || keys.size() != buffers.size()) {
     LOG(ERROR) << "Invalid Mooncake multi-buffer Put request.";
@@ -98,7 +113,7 @@ std::vector<uint8_t> MooncakeStoreBackend::batch_put(
   std::vector<std::vector<size_t>> all_sizes;
   all_buffers.reserve(buffers.size());
   all_sizes.reserve(buffers.size());
-  for (const MooncakeMultiBuffer& buffer : buffers) {
+  for (const StoreBuffer& buffer : buffers) {
     all_buffers.emplace_back(buffer.addresses);
     all_sizes.emplace_back(buffer.sizes);
   }
@@ -122,7 +137,7 @@ std::vector<uint8_t> MooncakeStoreBackend::batch_put(
 }
 
 bool MooncakeStoreBackend::get(const std::string& key,
-                               const MooncakeMultiBuffer& buffer) {
+                               const StoreBuffer& buffer) {
   if (client_ptr_ == nullptr ||
       buffer.addresses.size() != buffer.sizes.size()) {
     LOG(ERROR) << "Invalid Mooncake multi-buffer Get request for key=" << key;
@@ -165,21 +180,18 @@ bool MooncakeStoreBackend::get(const std::string& key,
   return false;
 }
 
-std::optional<std::vector<MooncakeRegisteredRange>>
-MooncakeStoreBackend::unique_ranges(
-    const std::vector<MooncakeRegisteredRange>& ranges) {
-  std::vector<MooncakeRegisteredRange> unique;
+std::optional<std::vector<StoreRange>> MooncakeStoreBackend::unique_ranges(
+    const std::vector<StoreRange>& ranges) {
+  std::vector<StoreRange> unique;
   unique.reserve(ranges.size());
-  for (const MooncakeRegisteredRange& range : ranges) {
+  for (const StoreRange& range : ranges) {
     const uintptr_t address = reinterpret_cast<uintptr_t>(range.address);
     if (range.address == nullptr || range.bytes == 0 ||
         range.bytes > std::numeric_limits<uintptr_t>::max() - address) {
       return std::nullopt;
     }
     const auto same_address = std::find_if(
-        unique.begin(),
-        unique.end(),
-        [address](const MooncakeRegisteredRange& item) {
+        unique.begin(), unique.end(), [address](const StoreRange& item) {
           return reinterpret_cast<uintptr_t>(item.address) == address;
         });
     if (same_address == unique.end()) {
@@ -189,16 +201,15 @@ MooncakeStoreBackend::unique_ranges(
     }
   }
 
-  std::vector<MooncakeRegisteredRange> ordered = unique;
+  std::vector<StoreRange> ordered = unique;
   std::sort(ordered.begin(),
             ordered.end(),
-            [](const MooncakeRegisteredRange& lhs,
-               const MooncakeRegisteredRange& rhs) {
+            [](const StoreRange& lhs, const StoreRange& rhs) {
               return reinterpret_cast<uintptr_t>(lhs.address) <
                      reinterpret_cast<uintptr_t>(rhs.address);
             });
   for (size_t range_index = 1; range_index < ordered.size(); ++range_index) {
-    const MooncakeRegisteredRange& previous = ordered[range_index - 1];
+    const StoreRange& previous = ordered[range_index - 1];
     const uintptr_t previous_end =
         reinterpret_cast<uintptr_t>(previous.address) + previous.bytes;
     if (reinterpret_cast<uintptr_t>(ordered[range_index].address) <

@@ -25,7 +25,12 @@ limitations under the License.
 #include <unordered_set>
 #include <utility>
 
+#include "core/kv_cache/transfer/mooncake_store_backend.h"
 #include "util/hash_util.h"
+
+#if defined(USE_YUANRONG)
+#include "core/kv_cache/transfer/yuanrong_store_backend.h"
+#endif
 
 namespace xllm {
 namespace {
@@ -52,6 +57,39 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
   config_ = config;
   initialize_store_index(std::move(store_index));
 
+#if defined(USE_YUANRONG)
+  if (config_.backend == "yuanrong") {
+    YuanRongStoreConfig store_config;
+    if (!config_.yuanrong_host.empty()) {
+      store_config.host = config_.yuanrong_host;
+    }
+    store_config.port = config_.yuanrong_port;
+    store_config.timeout_ms = config_.yuanrong_timeout_ms;
+    store_config.bridge_path = config_.yuanrong_bridge_path;
+    auto backend =
+        std::make_unique<YuanRongStoreBackend>(std::move(store_config));
+    // YuanRong copies host buffers into its own shared memory, so there is
+    // nothing to pin or register. Opening the client here keeps a bad
+    // endpoint or a missing bridge at startup instead of on the first put.
+    if (!backend->initialize()) {
+      LOG(ERROR) << "Failed to initialize the YuanRong store backend.";
+      return false;
+    }
+    backend_ = std::move(backend);
+    is_initialized_ = true;
+    return true;
+  }
+#else
+  CHECK(config_.backend != "yuanrong")
+      << "store_backend=yuanrong requires a build with USE_YUANRONG.";
+#endif
+
+  const std::optional<std::vector<StoreRange>> ranges = collect_ranges();
+  if (!ranges.has_value()) {
+    LOG(ERROR) << "Failed to collect Mooncake Host tensor ranges.";
+    return false;
+  }
+
   const std::optional<std::string> device_names =
       get_store_device_names(config_);
   if (config_.protocol == "rdma") {
@@ -62,12 +100,6 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
                  << config_.protocol << ".";
   }
 
-  const std::optional<std::vector<MooncakeRegisteredRange>> ranges =
-      collect_ranges();
-  if (!ranges.has_value()) {
-    LOG(ERROR) << "Failed to collect Mooncake Host tensor ranges.";
-    return false;
-  }
   MooncakeStoreBackendConfig backend_config;
   backend_config.localhost_name = config_.localhost_name;
   backend_config.protocol = config_.protocol;
@@ -75,11 +107,20 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
   backend_config.metadata_server = config_.metadata_server;
   backend_config.master_server_address = config_.master_server_address;
   backend_config.replica_num = config_.replica_num;
-  backend_ = std::make_unique<MooncakeStoreBackend>();
-  if (!backend_->init(backend_config, *ranges)) {
-    backend_.reset();
+  // setup_real skips MountSegment when global_segment_size is 0, which leaves
+  // the store with no capacity. Size the segment to the host cache the store
+  // is backing, so a block offloaded to host memory always has room.
+  backend_config.global_segment_size = 0;
+  for (const StoreRange& range : *ranges) {
+    backend_config.global_segment_size += range.bytes;
+  }
+  LOG(INFO) << "Mooncake Store global segment size: "
+            << backend_config.global_segment_size << " bytes.";
+  auto mooncake_backend = std::make_unique<MooncakeStoreBackend>();
+  if (!mooncake_backend->init(backend_config, *ranges)) {
     return false;
   }
+  backend_ = std::move(mooncake_backend);
 
   is_initialized_ = true;
   return true;
@@ -307,7 +348,7 @@ uint32_t KVCacheStore::batch_put(
 
   std::vector<uint8_t> physical_results(requests.size(), /*value=*/0);
   std::vector<std::string> put_keys;
-  std::vector<MooncakeMultiBuffer> put_buffers;
+  std::vector<StoreBuffer> put_buffers;
   std::vector<size_t> put_group_indices;
   put_keys.reserve(groups.size());
   put_buffers.reserve(groups.size());
@@ -315,7 +356,7 @@ uint32_t KVCacheStore::batch_put(
   for (size_t group_index = 0; group_index < groups.size(); ++group_index) {
     const RequestGroup& group = groups[group_index];
     const PhysicalRequest& request = requests[group.request_indices.front()];
-    const std::optional<MooncakeMultiBuffer> buffer = build_multi_buffer(
+    const std::optional<StoreBuffer> buffer = build_multi_buffer(
         *request.entry,
         block_transfer_info[request.logical_index].dst_block_id);
     if (!buffer.has_value()) {
@@ -382,7 +423,7 @@ std::vector<uint8_t> KVCacheStore::batch_get_with_status(
   for (size_t request_index = 0; request_index < requests.size();
        ++request_index) {
     const PhysicalRequest& request = requests[request_index];
-    const std::optional<MooncakeMultiBuffer> buffer = build_multi_buffer(
+    const std::optional<StoreBuffer> buffer = build_multi_buffer(
         *request.entry,
         block_transfer_info[request.logical_index].dst_block_id);
     if (!buffer.has_value() || backend_ == nullptr) {
@@ -395,7 +436,7 @@ std::vector<uint8_t> KVCacheStore::batch_get_with_status(
       block_transfer_info.size(), requests, physical_results);
 }
 
-std::optional<MooncakeMultiBuffer> KVCacheStore::build_multi_buffer(
+std::optional<StoreBuffer> KVCacheStore::build_multi_buffer(
     const StoreEntry& entry,
     int32_t block_id) const {
   if (entry.block_tensors.empty()) {
@@ -404,7 +445,7 @@ std::optional<MooncakeMultiBuffer> KVCacheStore::build_multi_buffer(
     return std::nullopt;
   }
 
-  MooncakeMultiBuffer buffer;
+  StoreBuffer buffer;
   buffer.addresses.reserve(entry.block_tensors.size());
   buffer.sizes.reserve(entry.block_tensors.size());
   for (const torch::Tensor& tensor : entry.block_tensors) {
@@ -428,9 +469,8 @@ std::optional<MooncakeMultiBuffer> KVCacheStore::build_multi_buffer(
   return buffer;
 }
 
-std::optional<std::vector<MooncakeRegisteredRange>>
-KVCacheStore::collect_ranges() const {
-  std::vector<MooncakeRegisteredRange> ranges;
+std::optional<std::vector<StoreRange>> KVCacheStore::collect_ranges() const {
+  std::vector<StoreRange> ranges;
   for (const auto& [block_type, entries] : store_index_) {
     for (const StoreEntry& entry : entries) {
       const BlockTypeTensorMap tensors =
@@ -444,10 +484,10 @@ KVCacheStore::collect_ranges() const {
           LOG(ERROR) << "Invalid Host tensor registration range.";
           return std::nullopt;
         }
-        ranges.emplace_back(MooncakeRegisteredRange{
-            tensor.data_ptr(),
-            static_cast<size_t>(tensor.numel()) *
-                static_cast<size_t>(tensor.element_size())});
+        ranges.emplace_back(
+            StoreRange{tensor.data_ptr(),
+                       static_cast<size_t>(tensor.numel()) *
+                           static_cast<size_t>(tensor.element_size())});
       }
     }
   }

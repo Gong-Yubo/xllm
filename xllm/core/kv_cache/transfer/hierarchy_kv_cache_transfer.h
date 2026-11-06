@@ -70,6 +70,7 @@ class HierarchyKVCacheTransfer final {
     PROPERTY(bool, enable_mla) = false;
     PROPERTY(bool, enable_kvcache_store) = false;
     PROPERTY(bool, enable_task_pipeline) = false;
+    PROPERTY(std::string, store_backend) = "mooncake";
     PROPERTY(std::string, store_protocol) = "rdma";
     PROPERTY(std::string, store_rdma_devices) = "";
     PROPERTY(std::string, store_master_server_address) = "";
@@ -77,6 +78,10 @@ class HierarchyKVCacheTransfer final {
     PROPERTY(std::string, store_local_hostname) = "";
     PROPERTY(std::string, store_namespace) = "";
     PROPERTY(uint32_t, store_worker_id) = 0;
+    PROPERTY(std::string, store_yuanrong_host) = "";
+    PROPERTY(int32_t, store_yuanrong_port) = 0;
+    PROPERTY(int32_t, store_yuanrong_timeout_ms) = 60000;
+    PROPERTY(std::string, store_yuanrong_bridge_path) = "";
   };
 
   HierarchyKVCacheTransfer(const Options& options, const torch::Device& device);

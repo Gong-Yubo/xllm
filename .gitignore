@@ -59,3 +59,6 @@ compile_commands.json
 /local
 /logs
 /log
+# locally unpacked SDKs (e.g. the YuanRong distribution)
+/output
+.workbuddy/

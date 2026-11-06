@@ -90,6 +90,39 @@ cc_test(
     GTest::gtest_main
 )
 
+endif()
+
+if(USE_YUANRONG)
+  # The backend only needs the C ABI, so this test compiles it directly instead
+  # of dragging in the whole transfer library. A stub bridge stands in for a
+  # YuanRong cluster: only the service behind the ABI is replaced, the backend
+  # under test is production code.
+  cc_test(
+    NAME
+      yuanrong_store_backend_test
+    CPU_ONLY
+    SRCS
+      yuanrong_store_backend_test.cpp
+      ${PROJECT_SOURCE_DIR}/xllm/core/kv_cache/transfer/yuanrong_store_backend.cpp
+    DEPS
+      glog::glog
+      GTest::gtest_main
+    LINKOPTS
+      ${CMAKE_DL_LIBS}
+  )
+  add_library(xllm_yuanrong_store_bridge_stub SHARED
+    yuanrong_store_bridge_stub.cpp
+  )
+  set_target_properties(xllm_yuanrong_store_bridge_stub PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+  )
+  add_dependencies(yuanrong_store_backend_test xllm_yuanrong_store_bridge_stub)
+  target_compile_definitions(yuanrong_store_backend_test PRIVATE
+    "XLLM_YUANRONG_BRIDGE_STUB_PATH=\"$<TARGET_FILE:xllm_yuanrong_store_bridge_stub>\""
+  )
+endif()
+
+if(USE_NPU OR USE_MLU)
 cc_test(
   NAME
     basic_host_kv_transfer_test
