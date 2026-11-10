@@ -34,6 +34,7 @@ limitations under the License.
 #include "core/distributed_runtime/engine_dispatch.h"
 #include "core/distributed_runtime/kv_cache_transfer_coordinator.h"
 #include "core/distributed_runtime/model_residency_coordinator.h"
+#include "core/distributed_runtime/store_options.h"
 #include "core/framework/config/execution_config.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/load_config.h"
@@ -176,17 +177,8 @@ LLMMaster::LLMMaster(const Options& options)
       .max_tokens_per_batch(options_.max_tokens_per_batch())
       .max_tokens_per_chunk_for_prefill(
           options_.max_tokens_per_chunk_for_prefill())
-      .host_blocks_factor(options_.host_blocks_factor())
-      .enable_kvcache_store(options_.enable_kvcache_store())
-      .store_protocol(options_.store_protocol())
-      .store_rdma_devices(options_.store_rdma_devices())
-      .store_master_server_address(options_.store_master_server_address())
-      .store_metadata_server(options_.store_metadata_server())
-      .store_local_hostname(options_.store_local_hostname())
-      .prefetch_batch_size(options_.prefetch_batch_size())
-      .prefetch_timeout(options_.prefetch_timeout())
-      .layers_wise_copy_batchs(options_.layers_wise_copy_batchs())
-      .kv_cache_dtype(options_.kv_cache_dtype());
+      .host_blocks_factor(options_.host_blocks_factor());
+  apply_store_options(&engine_options, options_);
 
   if (!use_ssm_engine) {
     llm_engine_ = std::make_unique<LLMEngine>(engine_options);
