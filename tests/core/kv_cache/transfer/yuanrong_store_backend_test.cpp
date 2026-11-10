@@ -203,5 +203,98 @@ TEST(YuanRongStoreBackendTest, RejectsMismatchedRangeArrays) {
   EXPECT_FALSE(backend.get("model/blk0", payload.buffer()));
 }
 
+TEST(YuanRongStoreBackendTest, BatchGetReturnsOneStatusPerKey) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  BlockPayload first(0x01, 0x02);
+  BlockPayload second(0x03, 0x04);
+  BlockPayload third(0x05, 0x06);
+  const std::vector<uint8_t> puts = backend.batch_put(
+      {"model/blk0", "model/blk1", "model/blk2"},
+      {first.buffer(), second.buffer(), third.buffer()});
+  ASSERT_EQ(puts.size(), 3U);
+  EXPECT_EQ(puts[0], 1);
+  EXPECT_EQ(puts[1], 1);
+  EXPECT_EQ(puts[2], 1);
+
+  first.wipe();
+  second.wipe();
+  third.wipe();
+  const std::vector<uint8_t> statuses =
+      backend.batch_get({"model/blk0", "model/blk1", "model/blk2"},
+                        {first.buffer(), second.buffer(), third.buffer()});
+  ASSERT_EQ(statuses.size(), 3U);
+  EXPECT_EQ(statuses[0], 1);
+  EXPECT_EQ(statuses[1], 1);
+  EXPECT_EQ(statuses[2], 1);
+  expect_payload(first, 0x01, 0x02);
+  expect_payload(second, 0x03, 0x04);
+  expect_payload(third, 0x05, 0x06);
+
+  EXPECT_TRUE(backend.batch_get({}, {}).empty());
+  const std::vector<uint8_t> mismatched = backend.batch_get({"model/blk0"}, {});
+  ASSERT_EQ(mismatched.size(), 1U);
+  EXPECT_EQ(mismatched[0], 0);
+}
+
+TEST(YuanRongStoreBackendTest, PartialHitIsNotABatchFailure) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  BlockPayload first(0x11, 0x12);
+  BlockPayload second(0x13, 0x14);
+  ASSERT_EQ(backend.batch_put({"model/blk0", "model/blk1"},
+                              {first.buffer(), second.buffer()})[0],
+            1);
+
+  first.wipe();
+  second.wipe();
+  BlockPayload absent(0x00, 0x00);
+  // DataSystem returns K_OK for a partially hit batch: the missing key must
+  // not discard the two objects that were actually found.
+  const std::vector<uint8_t> statuses =
+      backend.batch_get({"model/blk0", "model/never-published", "model/blk1"},
+                        {first.buffer(), absent.buffer(), second.buffer()});
+  ASSERT_EQ(statuses.size(), 3U);
+  EXPECT_EQ(statuses[0], 1);
+  EXPECT_EQ(statuses[1], 0);
+  EXPECT_EQ(statuses[2], 1);
+  expect_payload(first, 0x11, 0x12);
+  expect_payload(second, 0x13, 0x14);
+}
+
+TEST(YuanRongStoreBackendTest, EmptyPayloadIsAMissNotAnError) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+
+  // A zero-range object is stored as an empty payload. The SDK uses an empty
+  // payload to encode a missing key, so reading it back must be a miss that
+  // leaves the rest of the batch intact.
+  StoreBuffer empty_object;
+  ASSERT_EQ(backend.batch_put({"model/empty"}, {empty_object})[0], 1);
+
+  BlockPayload good(0x31, 0x32);
+  ASSERT_EQ(backend.batch_put({"model/good"}, {good.buffer()})[0], 1);
+
+  good.wipe();
+  BlockPayload empty_destination(0x00, 0x00);
+  const std::vector<uint8_t> statuses =
+      backend.batch_get({"model/empty", "model/good"},
+                        {empty_destination.buffer(), good.buffer()});
+  ASSERT_EQ(statuses.size(), 2U);
+  EXPECT_EQ(statuses[0], 0);
+  EXPECT_EQ(statuses[1], 1);
+  expect_payload(good, 0x31, 0x32);
+}
+
+TEST(YuanRongStoreBackendTest, DefaultRequestTimeoutIsBounded) {
+  // A cache miss must fail fast. The old 60000 ms default let a prefetch hold
+  // a thread for a minute; guard against reintroducing it here as well.
+  const YuanRongStoreConfig config{};
+  EXPECT_TRUE(config.timeout_ms > 0);
+  EXPECT_TRUE(config.timeout_ms <= 1000);
+}
+
 }  // namespace
 }  // namespace xllm

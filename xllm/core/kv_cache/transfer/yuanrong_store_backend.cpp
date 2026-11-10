@@ -61,6 +61,48 @@ YuanRongStoreBackend::~YuanRongStoreBackend() {
 
 bool YuanRongStoreBackend::initialize() { return ensure_initialized(); }
 
+bool YuanRongStoreBackend::marshal_buffers(
+    const std::vector<StoreBuffer>& buffers,
+    std::vector<std::vector<uint64_t>>* size_storage,
+    std::vector<BridgeBuffer>* bridge_buffers) {
+  // reserve() before emplace_back() keeps the inner vectors' data pointers
+  // stable while bridge_buffers is being filled.
+  size_storage->reserve(buffers.size());
+  for (const StoreBuffer& buffer : buffers) {
+    if (buffer.addresses.size() != buffer.sizes.size()) {
+      return false;
+    }
+    std::vector<uint64_t> sizes;
+    sizes.reserve(buffer.sizes.size());
+    for (size_t size : buffer.sizes) {
+      sizes.emplace_back(static_cast<uint64_t>(size));
+    }
+    size_storage->emplace_back(std::move(sizes));
+  }
+  bridge_buffers->reserve(buffers.size());
+  for (size_t index = 0; index < buffers.size(); ++index) {
+    bridge_buffers->push_back(
+        BridgeBuffer{buffers[index].addresses.data(),
+                     (*size_storage)[index].data(),
+                     (*size_storage)[index].size()});
+  }
+  return true;
+}
+
+void YuanRongStoreBackend::encode_keys(
+    const std::vector<std::string>& keys,
+    std::vector<std::string>* encoded,
+    std::vector<const char*>* raw) {
+  encoded->reserve(keys.size());
+  for (const std::string& key : keys) {
+    encoded->emplace_back(encode_key(key));
+  }
+  raw->reserve(encoded->size());
+  for (const std::string& key : *encoded) {
+    raw->push_back(key.c_str());
+  }
+}
+
 std::vector<uint8_t> YuanRongStoreBackend::batch_put(
     const std::vector<std::string>& keys,
     const std::vector<StoreBuffer>& buffers) {
@@ -74,41 +116,16 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_put(
     return statuses;
   }
 
-  // The bridge takes arrays of ranges, so the converted size vectors must
-  // outlive the call.
   std::vector<std::vector<uint64_t>> size_storage;
-  size_storage.reserve(buffers.size());
-  for (const StoreBuffer& buffer : buffers) {
-    if (buffer.addresses.size() != buffer.sizes.size()) {
-      LOG(ERROR) << "YuanRong store put buffer has mismatched range arrays";
-      return statuses;
-    }
-    std::vector<uint64_t> sizes;
-    sizes.reserve(buffer.sizes.size());
-    for (size_t size : buffer.sizes) {
-      sizes.emplace_back(static_cast<uint64_t>(size));
-    }
-    size_storage.emplace_back(std::move(sizes));
-  }
-
   std::vector<BridgeBuffer> bridge_buffers;
-  bridge_buffers.reserve(buffers.size());
-  for (size_t index = 0; index < buffers.size(); ++index) {
-    bridge_buffers.push_back(BridgeBuffer{buffers[index].addresses.data(),
-                                          size_storage[index].data(),
-                                          size_storage[index].size()});
+  if (!marshal_buffers(buffers, &size_storage, &bridge_buffers)) {
+    LOG(ERROR) << "YuanRong store put buffer has mismatched range arrays";
+    return statuses;
   }
 
   std::vector<std::string> encoded_keys;
-  encoded_keys.reserve(keys.size());
-  for (const std::string& key : keys) {
-    encoded_keys.emplace_back(encode_key(key));
-  }
   std::vector<const char*> raw_keys;
-  raw_keys.reserve(encoded_keys.size());
-  for (const std::string& key : encoded_keys) {
-    raw_keys.push_back(key.c_str());
-  }
+  encode_keys(keys, &encoded_keys, &raw_keys);
 
   if (!bridge_mset_(bridge_client_,
                     raw_keys.data(),
@@ -120,32 +137,49 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_put(
   return std::vector<uint8_t>(keys.size(), /*value=*/1);
 }
 
+std::vector<uint8_t> YuanRongStoreBackend::batch_get(
+    const std::vector<std::string>& keys,
+    const std::vector<StoreBuffer>& buffers) {
+  std::vector<uint8_t> statuses(keys.size(), /*value=*/0);
+  if (keys.size() != buffers.size()) {
+    LOG(ERROR) << "YuanRong store get requires one buffer per key, keys="
+               << keys.size() << ", buffers=" << buffers.size();
+    return statuses;
+  }
+  if (keys.empty() || !ensure_initialized()) {
+    return statuses;
+  }
+
+  std::vector<std::vector<uint64_t>> size_storage;
+  std::vector<BridgeBuffer> bridge_buffers;
+  if (!marshal_buffers(buffers, &size_storage, &bridge_buffers)) {
+    LOG(ERROR) << "YuanRong store get buffer has mismatched range arrays";
+    return statuses;
+  }
+
+  std::vector<std::string> encoded_keys;
+  std::vector<const char*> raw_keys;
+  encode_keys(keys, &encoded_keys, &raw_keys);
+
+  // One SDK Get for the whole prefetch. The bridge fills one status byte per
+  // key: a partial hit is still a successful call, and a missing object only
+  // clears its own byte.
+  if (!bridge_mget_(bridge_client_,
+                    raw_keys.data(),
+                    bridge_buffers.data(),
+                    statuses.data(),
+                    raw_keys.size())) {
+    LOG(ERROR) << "YuanRong store MGet failed for " << keys.size()
+               << " keys: " << last_error();
+    return std::vector<uint8_t>(keys.size(), /*value=*/0);
+  }
+  return statuses;
+}
+
 bool YuanRongStoreBackend::get(const std::string& key,
                                const StoreBuffer& buffer) {
-  if (buffer.addresses.size() != buffer.sizes.size()) {
-    LOG(ERROR) << "YuanRong store get buffer has mismatched range arrays";
-    return false;
-  }
-  if (!ensure_initialized()) {
-    return false;
-  }
-
-  std::vector<uint64_t> sizes;
-  sizes.reserve(buffer.sizes.size());
-  for (size_t size : buffer.sizes) {
-    sizes.emplace_back(static_cast<uint64_t>(size));
-  }
-  BridgeBuffer bridge_buffer{
-      buffer.addresses.data(), sizes.data(), sizes.size()};
-
-  const std::string encoded_key = encode_key(key);
-  const char* raw_key = encoded_key.c_str();
-  if (!bridge_mget_(bridge_client_, &raw_key, &bridge_buffer, 1)) {
-    LOG(ERROR) << "YuanRong store MGet failed for key " << key << ": "
-               << last_error();
-    return false;
-  }
-  return true;
+  const std::vector<uint8_t> statuses = batch_get({key}, {buffer});
+  return !statuses.empty() && statuses[0] != 0;
 }
 
 const char* YuanRongStoreBackend::last_error() const {

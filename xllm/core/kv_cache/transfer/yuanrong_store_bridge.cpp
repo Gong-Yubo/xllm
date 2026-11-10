@@ -27,6 +27,7 @@ limitations under the License.
 
 #include <datasystem/kv_client.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -205,18 +206,25 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
 }
 
 // Reads one object per key into the caller's host ranges, in place.
+//
+// DataSystem's multi-key Get reports K_OK when at least one key is present:
+// a missing key leaves its payload empty. A miss is therefore a per-key
+// result, not a failed batch. `statuses` receives one byte per key (1 hit,
+// 0 miss); returning false is reserved for a genuine client/SDK error.
 extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     void* opaque,
     const char* const* keys,
     XllmYrStoreBuffer* buffers,
+    uint8_t* statuses,
     size_t count) {
   auto* store = reinterpret_cast<StoreClient*>(opaque);
   if (store == nullptr || store->client == nullptr) {
     return set_error(store, "YuanRong store client is null");
   }
-  if (keys == nullptr || buffers == nullptr) {
+  if (keys == nullptr || buffers == nullptr || statuses == nullptr) {
     return set_error(store, "YuanRong store batch has null input");
   }
+  std::memset(statuses, 0, count);
 
   try {
     std::vector<std::string> key_vec;
@@ -237,22 +245,23 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
       return set_error(store, status.ToString());
     }
 
+    const size_t returned = std::min(payload_vec.size(), count);
     for (size_t index = 0; index < count; ++index) {
-      const std::string& payload = payload_vec[index];
-      if (payload.empty()) {
-        return set_error(store,
-                         "YuanRong store returned an empty object for key " +
-                             key_vec[index]);
+      // The SDK may return fewer entries than requested; absent entries are
+      // misses. An empty payload is the SDK's encoding for a missing key.
+      if (index >= returned || payload_vec[index].empty()) {
+        continue;
       }
+      const std::string& payload = payload_vec[index];
       const XllmYrStoreBuffer& buffer = buffers[index];
       uint64_t expected = 0;
       for (size_t range = 0; range < buffer.count; ++range) {
         expected += buffer.sizes[range];
       }
       if (payload.size() != static_cast<size_t>(expected)) {
-        return set_error(
-            store,
-            "YuanRong store object size mismatch for key " + key_vec[index]);
+        // A size mismatch means this object is not the block we asked for.
+        // Treat it as a miss for this key and keep the other hits.
+        continue;
       }
       size_t offset = 0;
       for (size_t range = 0; range < buffer.count; ++range) {
@@ -266,6 +275,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
         std::memcpy(buffer.addresses[range], payload.data() + offset, size);
         offset += static_cast<size_t>(size);
       }
+      statuses[index] = 1;
     }
     store->last_error.clear();
     return true;

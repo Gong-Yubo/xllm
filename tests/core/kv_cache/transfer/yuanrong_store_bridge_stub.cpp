@@ -128,22 +128,27 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
   return true;
 }
 
+// Mirrors the SDK's multi-key Get contract: a missing key leaves its payload
+// empty and the call still succeeds if at least one key is present. Per-key
+// results go into `statuses`; only a genuine input error returns false.
 extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     void* opaque,
     const char* const* keys,
     XllmYrStoreBuffer* buffers,
+    uint8_t* statuses,
     size_t count) {
   auto* store = static_cast<StubStore*>(opaque);
   if (store == nullptr) {
     return set_error(store, "stub client is null");
   }
+  std::memset(statuses, 0, count);
   for (size_t index = 0; index < count; ++index) {
     if (!is_legal_key(keys[index])) {
       return set_error(store, "illegal char(s)");
     }
     const auto found = store->objects.find(keys[index]);
-    if (found == store->objects.end()) {
-      return set_error(store, "K_NOT_FOUND");
+    if (found == store->objects.end() || found->second.empty()) {
+      continue;  // miss for this key, not a failed batch
     }
     const std::string& payload = found->second;
     size_t expected = 0;
@@ -151,7 +156,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
       expected += static_cast<size_t>(buffers[index].sizes[range]);
     }
     if (payload.size() != expected) {
-      return set_error(store, "object size mismatch");
+      continue;  // size mismatch is also a per-key miss
     }
     size_t offset = 0;
     for (size_t range = 0; range < buffers[index].count; ++range) {
@@ -163,6 +168,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
           buffers[index].addresses[range], payload.data() + offset, size);
       offset += size;
     }
+    statuses[index] = 1;
   }
   store->last_error.clear();
   return true;

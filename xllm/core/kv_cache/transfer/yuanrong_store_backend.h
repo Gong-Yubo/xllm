@@ -59,6 +59,12 @@ class YuanRongStoreBackend final : public KVCacheStoreBackend {
 
   bool get(const std::string& key, const StoreBuffer& buffer) override;
 
+  // DataSystem has a native multi-key Get. Override the default per-key loop
+  // so one prefetch costs one SDK call instead of one call per block.
+  std::vector<uint8_t> batch_get(
+      const std::vector<std::string>& keys,
+      const std::vector<StoreBuffer>& buffers) override;
+
   // Open the client eagerly so a misconfigured deployment fails at startup
   // instead of on the first put.
   bool initialize();
@@ -79,9 +85,25 @@ class YuanRongStoreBackend final : public KVCacheStoreBackend {
                                 const char* const*,
                                 const BridgeBuffer*,
                                 size_t);
-  using BridgeMGetFn =
-      bool (*)(void*, const char* const*, BridgeBuffer*, size_t);
+  // `statuses` is a caller-owned array of `count` bytes: the bridge sets one
+  // byte per key (1 hit, 0 miss). A batch with partial hits still returns
+  // true, because DataSystem reports K_OK when at least one key is present.
+  using BridgeMGetFn = bool (*)(void*,
+                                const char* const*,
+                                BridgeBuffer*,
+                                uint8_t*,
+                                size_t);
   using BridgeLastErrorFn = const char* (*)(void*);
+
+  // Shared marshalling for put and get. `size_storage` must outlive the bridge
+  // call because BridgeBuffer holds pointers into it.
+  static bool marshal_buffers(
+      const std::vector<StoreBuffer>& buffers,
+      std::vector<std::vector<uint64_t>>* size_storage,
+      std::vector<BridgeBuffer>* bridge_buffers);
+  static void encode_keys(const std::vector<std::string>& keys,
+                          std::vector<std::string>* encoded,
+                          std::vector<const char*>* raw);
 
   bool ensure_initialized();
   const char* last_error() const;

@@ -58,6 +58,25 @@ class KVCacheStoreBackend {
   // Read one object into `buffer`. False means the object is unavailable or
   // its size does not match, and the caller treats it as a cache miss.
   virtual bool get(const std::string& key, const StoreBuffer& buffer) = 0;
+
+  // Read one object per key, returning one status per key (1 hit, 0 miss) in
+  // the same order as `keys`. The default implementation preserves the
+  // historical per-key behaviour, so a backend without a native batch read
+  // needs no changes. Backends that can fetch several keys in one round trip
+  // should override this: prefetch otherwise issues N sequential store calls
+  // with a timeout each.
+  virtual std::vector<uint8_t> batch_get(
+      const std::vector<std::string>& keys,
+      const std::vector<StoreBuffer>& buffers) {
+    std::vector<uint8_t> statuses(keys.size(), /*value=*/0);
+    if (keys.size() != buffers.size()) {
+      return statuses;
+    }
+    for (size_t index = 0; index < keys.size(); ++index) {
+      statuses[index] = get(keys[index], buffers[index]) ? 1 : 0;
+    }
+    return statuses;
+  }
 };
 
 }  // namespace xllm

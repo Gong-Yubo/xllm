@@ -420,6 +420,16 @@ std::vector<uint8_t> KVCacheStore::batch_get_with_status(
   }
 
   std::vector<uint8_t> physical_results(requests.size(), /*value=*/0);
+  // Assemble the whole prefetch before crossing the backend seam. A backend
+  // with a native batch read (YuanRong) then does one store round trip instead
+  // of N sequential calls; the default backend implementation still loops
+  // over get() one key at a time, so Mooncake's behaviour is unchanged.
+  std::vector<std::string> keys;
+  std::vector<StoreBuffer> buffers;
+  std::vector<size_t> request_indices;
+  keys.reserve(requests.size());
+  buffers.reserve(requests.size());
+  request_indices.reserve(requests.size());
   for (size_t request_index = 0; request_index < requests.size();
        ++request_index) {
     const PhysicalRequest& request = requests[request_index];
@@ -429,8 +439,23 @@ std::vector<uint8_t> KVCacheStore::batch_get_with_status(
     if (!buffer.has_value() || backend_ == nullptr) {
       continue;
     }
-    physical_results[request_index] =
-        backend_->get(request.key, *buffer) ? 1 : 0;
+    keys.push_back(request.key);
+    buffers.push_back(*buffer);
+    request_indices.push_back(request_index);
+  }
+
+  if (backend_ != nullptr && !keys.empty()) {
+    const std::vector<uint8_t> batch_status =
+        backend_->batch_get(keys, buffers);
+    if (batch_status.size() != keys.size()) {
+      LOG(ERROR) << "KVCacheStore batch_get returned " << batch_status.size()
+                 << " statuses for " << keys.size() << " keys.";
+    } else {
+      for (size_t index = 0; index < keys.size(); ++index) {
+        physical_results[request_indices[index]] =
+            batch_status[index] != 0 ? 1 : 0;
+      }
+    }
   }
   return aggregate_results(
       block_transfer_info.size(), requests, physical_results);
