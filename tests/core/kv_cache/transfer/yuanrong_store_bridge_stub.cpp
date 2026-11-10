@@ -132,8 +132,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     void* opaque,
     const char* const* keys,
     XllmYrStoreBuffer* buffers,
-    size_t count,
-    int32_t /*timeout_ms*/) {
+    size_t count) {
   auto* store = static_cast<StubStore*>(opaque);
   if (store == nullptr) {
     return set_error(store, "stub client is null");

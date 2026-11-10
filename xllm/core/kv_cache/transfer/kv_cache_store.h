@@ -61,7 +61,8 @@ struct KVCacheStoreInitConfig {
   // An empty host falls back to 127.0.0.1 in the backend itself.
   std::string yuanrong_host;
   int32_t yuanrong_port = 0;
-  int32_t yuanrong_timeout_ms = 60000;
+  // One store request's deadline; connect timeout is set by the bridge.
+  int32_t yuanrong_timeout_ms = 500;
   std::string yuanrong_bridge_path;
 };
 

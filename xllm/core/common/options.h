@@ -210,7 +210,8 @@ class Options {
 
   PROPERTY(int32_t, store_yuanrong_port) = 0;
 
-  PROPERTY(int32_t, store_yuanrong_timeout_ms) = 60000;
+  // Deadline for one store request (connect timeout is set by the bridge).
+  PROPERTY(int32_t, store_yuanrong_timeout_ms) = 500;
 
   PROPERTY(std::string, store_yuanrong_bridge_path) = "";
 

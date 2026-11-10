@@ -123,7 +123,7 @@ Current support covers ordinary non-PD text inference with prefix caching enable
 | `store_backend` | `string` | `"mooncake"` | KV Cache Store backend, `mooncake` or `yuanrong`. `yuanrong` requires a build with `USE_YUANRONG`. |
 | `store_yuanrong_host` | `string` | `""` | YuanRong worker host used when `store_backend=yuanrong`; empty uses `127.0.0.1`. |
 | `store_yuanrong_port` | `int32` | `0` | YuanRong worker port used when `store_backend=yuanrong`. |
-| `store_yuanrong_timeout_ms` | `int32` | `60000` | YuanRong store request timeout in milliseconds. |
+| `store_yuanrong_timeout_ms` | `int32` | `500` | Upper bound on a single YuanRong store request, in milliseconds. A cache miss must fail fast; the bridge uses a separate 10 s connect timeout. |
 | `store_yuanrong_bridge_path` | `string` | `""` | Path to `libxllm_yuanrong_store_bridge.so`. Empty uses the loader search path. |
 | `enable_control_h2d_block_num` | `bool` | `false` | Whether to control the number of H2D copy blocks. |
 

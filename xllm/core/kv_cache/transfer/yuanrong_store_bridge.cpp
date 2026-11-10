@@ -50,6 +50,13 @@ struct XllmYrStoreBuffer {
 
 namespace {
 
+// Establishing a connection is a one-off start-up cost, while a store read is
+// on the inference critical path. The two must not share one timeout: a cache
+// miss has to fail fast instead of holding a prefetch thread. SDK defaults are
+// 9 s for connect and 0 (unbounded) for requests.
+constexpr int32_t kConnectTimeoutMs = 10000;
+constexpr int32_t kFallbackRequestTimeoutMs = 500;
+
 struct StoreClient {
   std::unique_ptr<datasystem::KVClient> client;
   std::string last_error;
@@ -97,15 +104,24 @@ std::string flatten(const XllmYrStoreBuffer& buffer) {
 
 }  // namespace
 
+// `request_timeout_ms` bounds a single store request. It is NOT a per-call
+// "wait for the object to become ready" argument: DataSystem 9.9.9 dropped
+// that third Get parameter, and the 0.9.3 default (0) means waiting without
+// a deadline. A non-positive value would therefore reintroduce the
+// minute-long stalls seen in the v4 test, so clamp it to the CLI default.
 extern "C" __attribute__((visibility("default"))) void*
-xllm_yr_store_create(const char* host, int32_t port, int32_t timeout_ms) {
+xllm_yr_store_create(const char* host,
+                     int32_t port,
+                     int32_t request_timeout_ms) {
   try {
     auto store = std::make_unique<StoreClient>();
     datasystem::ConnectOptions options;
     options.host = host == nullptr || host[0] == '\0' ? "127.0.0.1" : host;
     options.port = port;
-    options.connectTimeoutMs = timeout_ms;
-    options.requestTimeoutMs = timeout_ms;
+    options.connectTimeoutMs = kConnectTimeoutMs;
+    options.requestTimeoutMs = request_timeout_ms > 0
+                                   ? request_timeout_ms
+                                   : kFallbackRequestTimeoutMs;
     store->client = std::make_unique<datasystem::KVClient>(options);
     const auto status = store->client->Init();
     if (status.IsError()) {
@@ -193,8 +209,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     void* opaque,
     const char* const* keys,
     XllmYrStoreBuffer* buffers,
-    size_t count,
-    int32_t timeout_ms) {
+    size_t count) {
   auto* store = reinterpret_cast<StoreClient*>(opaque);
   if (store == nullptr || store->client == nullptr) {
     return set_error(store, "YuanRong store client is null");
@@ -213,8 +228,11 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
       key_vec.emplace_back(keys[index]);
     }
 
+    // Two-argument Get(keys, vals) compiles against both 0.9.3 (third
+    // subTimeoutMs parameter has a default) and 9.9.9 (no third parameter).
+    // The request deadline comes from ConnectOptions at create time.
     std::vector<std::string> payload_vec(count);
-    const auto status = store->client->Get(key_vec, payload_vec, timeout_ms);
+    const auto status = store->client->Get(key_vec, payload_vec);
     if (status.IsError()) {
       return set_error(store, status.ToString());
     }

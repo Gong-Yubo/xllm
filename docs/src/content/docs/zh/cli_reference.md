@@ -123,7 +123,7 @@ VMM 的使用方式和容量配置说明见[KV Cache 与模型权重的虚拟内
 | `store_backend` | `string` | `"mooncake"` | KV Cache Store 后端，可选 `mooncake` 或 `yuanrong`；`yuanrong` 需要以 `USE_YUANRONG` 构建。 |
 | `store_yuanrong_host` | `string` | `""` | `store_backend=yuanrong` 时使用的 YuanRong worker 主机名，为空时使用 `127.0.0.1`。 |
 | `store_yuanrong_port` | `int32` | `0` | `store_backend=yuanrong` 时使用的 YuanRong worker 端口。 |
-| `store_yuanrong_timeout_ms` | `int32` | `60000` | YuanRong 存储请求超时时间，单位毫秒。 |
+| `store_yuanrong_timeout_ms` | `int32` | `500` | 单次 YuanRong 存储请求的上限时间，单位毫秒；缓存未命中需快速失败，连接超时由 bridge 单独设置（10 秒）。 |
 | `store_yuanrong_bridge_path` | `string` | `""` | `libxllm_yuanrong_store_bridge.so` 的路径，为空时使用动态库搜索路径。 |
 | `enable_control_h2d_block_num` | `bool` | `false` | 是否控制 H2D 拷贝的 block 数。 |
 

@@ -91,7 +91,8 @@ class KVCacheStoreConfig final {
 
   PROPERTY(int32_t, store_yuanrong_port) = 0;
 
-  PROPERTY(int32_t, store_yuanrong_timeout_ms) = 60000;
+  // One store request's deadline; the bridge uses a separate connect timeout.
+  PROPERTY(int32_t, store_yuanrong_timeout_ms) = 500;
 
   // Path to libxllm_yuanrong_store_bridge.so. Empty uses the loader search
   // path, which is what an installed package relies on.

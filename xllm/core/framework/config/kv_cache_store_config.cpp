@@ -72,8 +72,9 @@ DEFINE_int32(store_yuanrong_port,
              "YuanRong worker port for store_backend=yuanrong.");
 
 DEFINE_int32(store_yuanrong_timeout_ms,
-             60000,
-             "YuanRong store request timeout in milliseconds.");
+             500,
+             "Upper bound on one YuanRong store request, in milliseconds. "
+             "A cache miss must fail fast; connect timeout is separate.");
 
 DEFINE_string(store_yuanrong_bridge_path,
               "",

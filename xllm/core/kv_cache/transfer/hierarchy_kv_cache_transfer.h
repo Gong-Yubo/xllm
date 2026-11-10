@@ -80,7 +80,8 @@ class HierarchyKVCacheTransfer final {
     PROPERTY(uint32_t, store_worker_id) = 0;
     PROPERTY(std::string, store_yuanrong_host) = "";
     PROPERTY(int32_t, store_yuanrong_port) = 0;
-    PROPERTY(int32_t, store_yuanrong_timeout_ms) = 60000;
+    // One store request's deadline; connect timeout is set by the bridge.
+    PROPERTY(int32_t, store_yuanrong_timeout_ms) = 500;
     PROPERTY(std::string, store_yuanrong_bridge_path) = "";
   };
 

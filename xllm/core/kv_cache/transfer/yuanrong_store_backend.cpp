@@ -140,8 +140,7 @@ bool YuanRongStoreBackend::get(const std::string& key,
 
   const std::string encoded_key = encode_key(key);
   const char* raw_key = encoded_key.c_str();
-  if (!bridge_mget_(
-          bridge_client_, &raw_key, &bridge_buffer, 1, config_.timeout_ms)) {
+  if (!bridge_mget_(bridge_client_, &raw_key, &bridge_buffer, 1)) {
     LOG(ERROR) << "YuanRong store MGet failed for key " << key << ": "
                << last_error();
     return false;

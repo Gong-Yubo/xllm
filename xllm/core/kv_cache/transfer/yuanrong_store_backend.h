@@ -26,7 +26,11 @@ namespace xllm {
 struct YuanRongStoreConfig {
   std::string host = "127.0.0.1";
   int32_t port = 0;
-  int32_t timeout_ms = 60000;
+  // Upper bound on one store request, not a connection timeout and not a
+  // "wait until the object is ready" deadline. A cache miss must fail fast:
+  // the v4 test showed 60 s stalls when this value was also used as the
+  // per-call Get sub-timeout. The bridge applies the same clamp.
+  int32_t timeout_ms = 500;
   // Path to libxllm_yuanrong_store_bridge.so. Empty means the default
   // library name, resolved through the loader path.
   std::string bridge_path;
@@ -76,7 +80,7 @@ class YuanRongStoreBackend final : public KVCacheStoreBackend {
                                 const BridgeBuffer*,
                                 size_t);
   using BridgeMGetFn =
-      bool (*)(void*, const char* const*, BridgeBuffer*, size_t, int32_t);
+      bool (*)(void*, const char* const*, BridgeBuffer*, size_t);
   using BridgeLastErrorFn = const char* (*)(void*);
 
   bool ensure_initialized();
