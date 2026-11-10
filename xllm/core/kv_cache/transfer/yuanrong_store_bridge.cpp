@@ -183,8 +183,12 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
     }
 
     datasystem::MSetParam param;
-    // KV blocks are one-shot content; keep them out of the shared L2 cache so
-    // they do not evict reusable objects.
+    // NOTE: despite the original intent of "keep KV blocks out of the shared
+    // L2 cache", NONE_L2_CACHE_EVICT is an *evictable* write in the 0.9.3
+    // headers. It is a suspect for the all-miss behaviour of the v4 32K run.
+    // Deliberately unchanged here: switching write modes needs a real-cluster
+    // A/B over the four modes before an assumption is baked into a CLI flag
+    // (design decision D5). Do not read this comment as an endorsement.
     param.writeMode = datasystem::WriteMode::NONE_L2_CACHE_EVICT;
     // NX leaves an existing object alone and still reports success, so
     // re-publishing a block costs nothing. Keys are content hashes, so the
