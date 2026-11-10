@@ -140,7 +140,23 @@ if(USE_YUANRONG)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(xllm_yuanrong_store_bridge
       PRIVATE
+        # The top-level link_libraries(cust_opapi) and --export-dynamic used by
+        # the main binary would otherwise leave unused Ascend/NPU DT_NEEDED
+        # entries on this shim. dlopen would then pull that runtime into the
+        # process. --as-needed drops them; the version script hides symbols.
+        "LINKER:--as-needed"
         "LINKER:--version-script=${CMAKE_BINARY_DIR}/xllm_yuanrong_bridge_symbols.map")
+  endif()
+  option(XLLM_YUANRONG_LINK_CHECK
+         "Assert the YuanRong bridge's DT_NEEDED/exported-symbol contract after linking"
+         ON)
+  if(XLLM_YUANRONG_LINK_CHECK AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_custom_command(TARGET xllm_yuanrong_store_bridge POST_BUILD
+      COMMAND ${CMAKE_COMMAND}
+        "-DBRIDGE_LIBRARY=$<TARGET_FILE:xllm_yuanrong_store_bridge>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/check_yuanrong_bridge.cmake"
+      COMMENT "Checking the YuanRong bridge link contract"
+      VERBATIM)
   endif()
   set_target_properties(xllm_yuanrong_store_bridge PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/xllm/core/server"
