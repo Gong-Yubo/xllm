@@ -41,6 +41,32 @@ target_include_directories(yuanrong_store_bridge_test BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/fake_datasystem
 )
 
+# KVCacheStore's prefetch batching is backend independent, but the existing
+# kv_cache_store_test needs an NPU/MLU toolchain to build. Compile the real
+# kv_cache_store.cpp with CPU-only stand-ins for its device headers, then
+# inject a recording backend so the batch/status wiring is covered everywhere.
+# yuanrong_store_backend.cpp is included because kv_cache_store.cpp references
+# it when USE_YUANRONG is on; the test itself never opens that backend.
+cc_test(
+  NAME
+    kv_cache_store_batch_test
+  CPU_ONLY
+  SRCS
+    kv_cache_store_batch_test.cpp
+    ${PROJECT_SOURCE_DIR}/xllm/core/kv_cache/transfer/kv_cache_store.cpp
+    ${PROJECT_SOURCE_DIR}/xllm/core/kv_cache/transfer/yuanrong_store_backend.cpp
+  DEPS
+    glog::glog
+    GTest::gtest_main
+  LINKOPTS
+    ${CMAKE_DL_LIBS}
+)
+target_include_directories(kv_cache_store_batch_test BEFORE PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/fake_runtime
+  ${PROJECT_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/xllm/core
+)
+
 cc_test(
   NAME
     host_kv_transfer_test
