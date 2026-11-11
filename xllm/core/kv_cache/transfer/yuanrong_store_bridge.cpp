@@ -153,9 +153,11 @@ extern "C" __attribute__((visibility("default"))) void xllm_yr_store_destroy(
   delete store;
 }
 
-// Writes one object per key. On success every key was stored; on failure the
-// caller treats the whole batch as failed, which is what KVCacheStore expects
-// (it aggregates per-key statuses itself from the per-call return).
+// Writes one object per key. A status error or a non-empty failed_keys list
+// reports the whole batch as failed: MSet has no per-key status array, so the
+// caller conservatively marks every key in this batch as not stored, including
+// any keys the SDK wrote before the failure. That direction is safe (no false
+// hit), but it is deliberately coarser than the per-key MGet result below.
 extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
     void* opaque,
     const char* const* keys,
@@ -248,10 +250,23 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     // Two-argument Get(keys, vals) compiles against both 0.9.3 (third
     // subTimeoutMs parameter has a default) and 9.9.9 (no third parameter).
     // The request deadline comes from ConnectOptions at create time.
+    //
+    // Pre-sizing is safe under both known SDK behaviours: the 0.9.3 header
+    // documents assignment at the key's index, while 0.10.1 GetWithLatch
+    // clears the vector and emplaces one value per key. 9.9.9 is still
+    // unverified on a real cluster, so reject the append-without-clear case
+    // loudly instead of reading the pre-sized empty slots as a full miss.
     std::vector<std::string> payload_vec(count);
     const auto status = store->client->Get(key_vec, payload_vec);
     if (status.IsError()) {
       return set_error(store, status.ToString());
+    }
+    if (payload_vec.size() > count) {
+      return set_error(store,
+                       "YuanRong Get returned " +
+                           std::to_string(payload_vec.size()) + " values for " +
+                           std::to_string(count) +
+                           " keys (append semantics are unsupported)");
     }
 
     const size_t returned = std::min(payload_vec.size(), count);
