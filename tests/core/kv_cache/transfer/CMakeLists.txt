@@ -14,6 +14,16 @@ cc_test(
 
 cc_test(
   NAME
+    store_ranges_test
+  CPU_ONLY
+  SRCS
+    store_ranges_test.cpp
+  DEPS
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
     host_kv_transfer_test
   CPU_ONLY
   SRCS

@@ -22,6 +22,8 @@ limitations under the License.
 #include <stdexcept>
 #include <utility>
 
+#include "core/kv_cache/transfer/store_ranges.h"
+
 namespace xllm {
 
 MooncakeStoreBackend::~MooncakeStoreBackend() { unregister_ranges(); }
@@ -182,42 +184,7 @@ bool MooncakeStoreBackend::get(const std::string& key,
 
 std::optional<std::vector<StoreRange>> MooncakeStoreBackend::unique_ranges(
     const std::vector<StoreRange>& ranges) {
-  std::vector<StoreRange> unique;
-  unique.reserve(ranges.size());
-  for (const StoreRange& range : ranges) {
-    const uintptr_t address = reinterpret_cast<uintptr_t>(range.address);
-    if (range.address == nullptr || range.bytes == 0 ||
-        range.bytes > std::numeric_limits<uintptr_t>::max() - address) {
-      return std::nullopt;
-    }
-    const auto same_address = std::find_if(
-        unique.begin(), unique.end(), [address](const StoreRange& item) {
-          return reinterpret_cast<uintptr_t>(item.address) == address;
-        });
-    if (same_address == unique.end()) {
-      unique.emplace_back(range);
-    } else if (same_address->bytes != range.bytes) {
-      return std::nullopt;
-    }
-  }
-
-  std::vector<StoreRange> ordered = unique;
-  std::sort(ordered.begin(),
-            ordered.end(),
-            [](const StoreRange& lhs, const StoreRange& rhs) {
-              return reinterpret_cast<uintptr_t>(lhs.address) <
-                     reinterpret_cast<uintptr_t>(rhs.address);
-            });
-  for (size_t range_index = 1; range_index < ordered.size(); ++range_index) {
-    const StoreRange& previous = ordered[range_index - 1];
-    const uintptr_t previous_end =
-        reinterpret_cast<uintptr_t>(previous.address) + previous.bytes;
-    if (reinterpret_cast<uintptr_t>(ordered[range_index].address) <
-        previous_end) {
-      return std::nullopt;
-    }
-  }
-  return unique;
+  return unique_store_ranges(ranges);
 }
 
 bool MooncakeStoreBackend::get_succeeded(int64_t expected_bytes,

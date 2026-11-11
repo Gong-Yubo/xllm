@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "core/kv_cache/transfer/mooncake_store_backend.h"
 #include "core/kv_cache/transfer/store_config_validation.h"
+#include "core/kv_cache/transfer/store_ranges.h"
 #include "util/hash_util.h"
 
 #if defined(USE_YUANRONG)
@@ -120,16 +121,26 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
   backend_config.master_server_address = config_.master_server_address;
   backend_config.replica_num = config_.replica_num;
   // setup_real skips MountSegment when global_segment_size is 0, which leaves
-  // the store with no capacity. Size the segment to the host cache the store
-  // is backing, so a block offloaded to host memory always has room.
-  backend_config.global_segment_size = 0;
-  for (const StoreRange& range : *ranges) {
-    backend_config.global_segment_size += range.bytes;
+  // the store with no capacity. Size the segment to exactly the ranges the
+  // backend registers: collect_ranges() can repeat a host tensor under several
+  // block types, and summing those duplicates would over-subscribe the pool.
+  const std::optional<std::vector<StoreRange>> unique_ranges =
+      unique_store_ranges(*ranges);
+  if (!unique_ranges.has_value()) {
+    LOG(ERROR) << "Invalid Mooncake Host tensor registration ranges.";
+    return false;
   }
+  const std::optional<size_t> segment_bytes = total_range_bytes(*unique_ranges);
+  if (!segment_bytes.has_value()) {
+    LOG(ERROR) << "Mooncake Host tensor ranges overflow the segment size.";
+    return false;
+  }
+  backend_config.global_segment_size = *segment_bytes;
   LOG(INFO) << "Mooncake Store global segment size: "
-            << backend_config.global_segment_size << " bytes.";
+            << backend_config.global_segment_size << " bytes from "
+            << unique_ranges->size() << " registered ranges.";
   auto mooncake_backend = std::make_unique<MooncakeStoreBackend>();
-  if (!mooncake_backend->init(backend_config, *ranges)) {
+  if (!mooncake_backend->init(backend_config, *unique_ranges)) {
     return false;
   }
   backend_ = std::move(mooncake_backend);
