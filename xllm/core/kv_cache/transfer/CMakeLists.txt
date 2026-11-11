@@ -137,7 +137,9 @@ if(USE_YUANRONG)
     PRIVATE
       "${YUANRONG_LIBRARY}"
   )
-  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  # Both flags are GNU/LLVM ld features on ELF, not compiler properties:
+  # CMAKE_CXX_COMPILER_ID would also match AppleClang, whose ld64 rejects them.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(xllm_yuanrong_store_bridge
       PRIVATE
         # The top-level link_libraries(cust_opapi) and --export-dynamic used by

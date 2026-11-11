@@ -92,17 +92,18 @@ bool flatten(const XllmYrStoreBuffer& buffer, std::string* out) {
   return true;
 }
 
-// DataSystem (>= 9.9.9) rejects keys that contain bytes outside this set, so
-// the stub enforces the same constraint: a regression in the backend's key
-// encoding fails here instead of only on a real worker.
+// The 0.9.3 SDK header documents object keys as ASCII letters, digits and
+// ~!@#$%^&*.-_ (kv_client.h, Create). Hex-encoded keys use only [0-9a-f], a
+// strict subset of that set, so a regression in the backend's encoding fails
+// here instead of only on a real worker.
 bool is_legal_key(const std::string& key) {
   for (unsigned char byte : key) {
     const bool legal =
         (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-        (byte >= '0' && byte <= '9') || byte == '.' || byte == '-' ||
-        byte == '_' || byte == '!' || byte == '@' || byte == '#' ||
-        byte == '%' || byte == '^' || byte == '*' || byte == '(' ||
-        byte == ')' || byte == '+' || byte == '=' || byte == ':' || byte == ';';
+        (byte >= '0' && byte <= '9') || byte == '~' || byte == '!' ||
+        byte == '@' || byte == '#' || byte == '$' || byte == '%' ||
+        byte == '^' || byte == '&' || byte == '*' || byte == '.' ||
+        byte == '-' || byte == '_';
     if (!legal) {
       return false;
     }

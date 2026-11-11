@@ -10,6 +10,12 @@
 # This script turns those two manual patches into a build-time assertion. It is
 # invoked only on Linux + USE_YUANRONG builds, and can be disabled with
 # -DXLLM_YUANRONG_LINK_CHECK=OFF if a toolchain lacks readelf/nm.
+#
+# Scope: native Linux/ELF builds whose .so the host's readelf/nm can parse and
+# whose linker honours --as-needed/--version-script. Cross-compiled targets
+# (host readelf against a foreign ELF), non-glibc or non-GNU/LLVM linkers and
+# non-ELF outputs should disable the check; the dependency blacklist below is
+# deliberately tied to this project's Ascend/NPU library names.
 
 # Script mode (-P) has no project policy baseline, so opt in explicitly.
 if(POLICY CMP0057)

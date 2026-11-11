@@ -541,6 +541,8 @@ std::vector<uint8_t> HierarchyKVCacheTransfer::prefetch_kv_blocks(
           .count();
   const size_t hit_count =
       std::count(hits.begin(), hits.end(), static_cast<uint8_t>(1));
+  // The denominator also counts requests whose multi-buffer assembly failed;
+  // they are reported as misses, so hit_rate is a conservative lower bound.
   const double hit_rate =
       hits.empty() ? 0.0 : 100.0 * static_cast<double>(hit_count) / hits.size();
   // One structured line per prefetch. The v5 benchmark report aggregates

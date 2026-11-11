@@ -28,11 +28,13 @@ namespace {
 
 constexpr char kDefaultBridgeLibrary[] = "libxllm_yuanrong_store_bridge.so";
 
-// DataSystem validates keys against ^[a-zA-Z0-9.\-_!@#%^*()+;:]*$ (and a 1024
-// byte cap). KVCacheStore keys are "xllm-kv-v3:<...>" + 32 raw hash bytes
-// (16 schema + 16 block content), so they would be rejected. Hex-encoding the
-// whole key is injective, keeps the prefix and both hashes unambiguous, and is
-// applied to put and get alike, so round trips are unaffected.
+// DataSystem rejects non-ASCII object keys. The 0.9.3 SDK header documents
+// letters, digits and ~!@#$%^&*.-_ with a 1024-byte cap (kv_client.h, Create),
+// and the 9.9.9 worker applies a stricter charset again. KVCacheStore keys are
+// "xllm-kv-v3:<...>" + 32 raw hash bytes (16 schema + 16 block content), so
+// they would be rejected. Hex-encoding the whole key leaves only [0-9a-f], a
+// subset of every documented charset; it is injective and is applied to put
+// and get alike, so round trips are unaffected.
 std::string encode_key(const std::string& key) {
   static constexpr char kHex[] = "0123456789abcdef";
   std::string encoded;

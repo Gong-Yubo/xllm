@@ -31,8 +31,10 @@ namespace xllm {
 // store flag is added.
 //
 // host_blocks_factor and the disaggregated-PD transfer options are deliberately
-// not here: they also gate host offload eligibility and PD topology, which the
-// VLM non-speculative path rejects (see the CHECK in vlm_master.cpp).
+// not here: they gate offload eligibility and PD topology rather than the store
+// itself. vlm_master.cpp already CHECKs host_blocks_factor <= 1.0 on both the
+// normal and speculative paths, so forwarding it here would not widen that
+// constraint.
 inline void apply_store_options(runtime::Options* engine_options,
                                 const Options& options) {
   if (engine_options == nullptr) {
