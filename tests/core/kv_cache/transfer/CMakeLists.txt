@@ -22,6 +22,25 @@ cc_test(
     GTest::gtest_main
 )
 
+# The production bridge is compiled unchanged; only the SDK header behind its
+# C ABI is replaced. The backend tests swap out the whole bridge, so without
+# this target the flattening, error handling and per-key status mapping are
+# never exercised on a CPU build or without a YuanRong worker.
+cc_test(
+  NAME
+    yuanrong_store_bridge_test
+  CPU_ONLY
+  SRCS
+    yuanrong_store_bridge_test.cpp
+    ${PROJECT_SOURCE_DIR}/xllm/core/kv_cache/transfer/yuanrong_store_bridge.cpp
+  DEPS
+    GTest::gtest_main
+)
+target_include_directories(yuanrong_store_bridge_test BEFORE PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/fake_datasystem
+)
+
 cc_test(
   NAME
     host_kv_transfer_test
