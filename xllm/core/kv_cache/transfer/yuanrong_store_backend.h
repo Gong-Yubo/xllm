@@ -16,6 +16,7 @@ limitations under the License.
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -88,29 +89,33 @@ class YuanRongStoreBackend final : public KVCacheStoreBackend {
   // `statuses` is a caller-owned array of `count` bytes: the bridge sets one
   // byte per key (1 hit, 0 miss). A batch with partial hits still returns
   // true, because DataSystem reports K_OK when at least one key is present.
-  using BridgeMGetFn = bool (*)(void*,
-                                const char* const*,
-                                BridgeBuffer*,
-                                uint8_t*,
-                                size_t);
+  using BridgeMGetFn =
+      bool (*)(void*, const char* const*, BridgeBuffer*, uint8_t*, size_t);
   using BridgeLastErrorFn = const char* (*)(void*);
 
   // Shared marshalling for put and get. `size_storage` must outlive the bridge
   // call because BridgeBuffer holds pointers into it.
-  static bool marshal_buffers(
-      const std::vector<StoreBuffer>& buffers,
-      std::vector<std::vector<uint64_t>>* size_storage,
-      std::vector<BridgeBuffer>* bridge_buffers);
+  static bool marshal_buffers(const std::vector<StoreBuffer>& buffers,
+                              std::vector<std::vector<uint64_t>>* size_storage,
+                              std::vector<BridgeBuffer>* bridge_buffers);
   static void encode_keys(const std::vector<std::string>& keys,
                           std::vector<std::string>* encoded,
                           std::vector<const char*>* raw);
 
   bool ensure_initialized();
-  const char* last_error() const;
+  // Callers must hold bridge_mutex_: the bridge keeps its last error in the
+  // shared client, so reading it is part of the serialized call.
+  const char* last_error_locked() const;
   bool load_bridge();
 
   YuanRongStoreConfig config_;
 
+  // WorkerService prefetches on a thread pool, but one backend owns a single
+  // DataSystem KVClient and that client is not documented as safe for
+  // concurrent Get/MSet. Serialize every bridge call (and the lazy dlopen /
+  // client creation) until the E1 concurrency experiment settles whether a
+  // per-thread client pays off.
+  std::mutex bridge_mutex_;
   void* bridge_handle_ = nullptr;
   void* bridge_client_ = nullptr;
 

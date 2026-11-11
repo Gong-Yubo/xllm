@@ -24,6 +24,11 @@ limitations under the License.
 // CPU, and the object KV client copies host buffers into the store. The device
 // oriented MSetD2H/MGetH2D pair is intentionally unused — it would interpret
 // a host pointer as device memory.
+//
+// Threading contract: one client returned by xllm_yr_store_create owns a
+// single KVClient plus a shared last-error string, and is NOT safe to call
+// concurrently. YuanRongStoreBackend serializes every call with its own
+// mutex; any other caller of this C ABI must do the same.
 
 #include <datasystem/kv_client.h>
 
@@ -110,19 +115,18 @@ std::string flatten(const XllmYrStoreBuffer& buffer) {
 // that third Get parameter, and the 0.9.3 default (0) means waiting without
 // a deadline. A non-positive value would therefore reintroduce the
 // minute-long stalls seen in the v4 test, so clamp it to the CLI default.
-extern "C" __attribute__((visibility("default"))) void*
-xllm_yr_store_create(const char* host,
-                     int32_t port,
-                     int32_t request_timeout_ms) {
+extern "C" __attribute__((visibility("default"))) void* xllm_yr_store_create(
+    const char* host,
+    int32_t port,
+    int32_t request_timeout_ms) {
   try {
     auto store = std::make_unique<StoreClient>();
     datasystem::ConnectOptions options;
     options.host = host == nullptr || host[0] == '\0' ? "127.0.0.1" : host;
     options.port = port;
     options.connectTimeoutMs = kConnectTimeoutMs;
-    options.requestTimeoutMs = request_timeout_ms > 0
-                                   ? request_timeout_ms
-                                   : kFallbackRequestTimeoutMs;
+    options.requestTimeoutMs =
+        request_timeout_ms > 0 ? request_timeout_ms : kFallbackRequestTimeoutMs;
     store->client = std::make_unique<datasystem::KVClient>(options);
     const auto status = store->client->Init();
     if (status.IsError()) {

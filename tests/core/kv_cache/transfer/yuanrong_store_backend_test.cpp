@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "core/kv_cache/transfer/yuanrong_store_backend.h"
 
+#include <dlfcn.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -210,9 +212,9 @@ TEST(YuanRongStoreBackendTest, BatchGetReturnsOneStatusPerKey) {
   BlockPayload first(0x01, 0x02);
   BlockPayload second(0x03, 0x04);
   BlockPayload third(0x05, 0x06);
-  const std::vector<uint8_t> puts = backend.batch_put(
-      {"model/blk0", "model/blk1", "model/blk2"},
-      {first.buffer(), second.buffer(), third.buffer()});
+  const std::vector<uint8_t> puts =
+      backend.batch_put({"model/blk0", "model/blk1", "model/blk2"},
+                        {first.buffer(), second.buffer(), third.buffer()});
   ASSERT_EQ(puts.size(), 3U);
   EXPECT_EQ(puts[0], 1);
   EXPECT_EQ(puts[1], 1);
@@ -286,6 +288,73 @@ TEST(YuanRongStoreBackendTest, EmptyPayloadIsAMissNotAnError) {
   EXPECT_EQ(statuses[0], 0);
   EXPECT_EQ(statuses[1], 1);
   expect_payload(good, 0x31, 0x32);
+}
+
+TEST(YuanRongStoreBackendTest, SerializesConcurrentPrefetchThreads) {
+#if defined(XLLM_YUANRONG_BRIDGE_STUB_PATH)
+  void* stub = dlopen(XLLM_YUANRONG_BRIDGE_STUB_PATH, RTLD_NOW | RTLD_LOCAL);
+  ASSERT_TRUE(stub != nullptr);
+  using ResetConcurrencyFn = void (*)();
+  using PeakConcurrencyFn = int32_t (*)();
+  auto reset_concurrency = reinterpret_cast<ResetConcurrencyFn>(
+      dlsym(stub, "xllm_yr_store_stub_reset_concurrency"));
+  auto peak_concurrency = reinterpret_cast<PeakConcurrencyFn>(
+      dlsym(stub, "xllm_yr_store_stub_peak_concurrency"));
+  ASSERT_TRUE(reset_concurrency != nullptr);
+  ASSERT_TRUE(peak_concurrency != nullptr);
+  reset_concurrency();
+
+  constexpr int32_t kThreadCount = 8;
+  constexpr int32_t kBlocksPerThread = 24;
+  std::vector<int32_t> failures(kThreadCount, 0);
+  {
+    YuanRongStoreBackend backend(make_yuanrong_config());
+    ASSERT_TRUE(backend.initialize());
+
+    // WorkerService prefetches on a thread pool against one shared client.
+    // Every thread owns distinct keys and buffers, so a failure here means a
+    // race in the backend rather than conflicting test data.
+    std::vector<std::thread> workers;
+    workers.reserve(kThreadCount);
+    for (int32_t thread = 0; thread < kThreadCount; ++thread) {
+      workers.emplace_back([&backend, &failures, thread]() {
+        for (int32_t block = 0; block < kBlocksPerThread; ++block) {
+          const std::string key = "model/t" + std::to_string(thread) + "/blk" +
+                                  std::to_string(block);
+          const uint8_t key_fill = static_cast<uint8_t>(thread + 1);
+          const uint8_t value_fill = static_cast<uint8_t>(block + 1);
+          BlockPayload payload(key_fill, value_fill);
+          const std::vector<uint8_t> put =
+              backend.batch_put({key}, {payload.buffer()});
+          if (put.size() != 1U || put[0] != 1) {
+            ++failures[thread];
+            continue;
+          }
+          payload.wipe();
+          if (!backend.get(key, payload.buffer())) {
+            ++failures[thread];
+            continue;
+          }
+          if (payload.key_range() != std::vector<uint8_t>(64, key_fill) ||
+              payload.value_range() != std::vector<uint8_t>(32, value_fill)) {
+            ++failures[thread];
+          }
+        }
+      });
+    }
+    for (std::thread& worker : workers) {
+      worker.join();
+    }
+  }
+
+  for (int32_t failed : failures) {
+    EXPECT_EQ(failed, 0);
+  }
+  // A peak above one would mean two prefetch threads reached the single
+  // KVClient (and its shared last_error string) at the same time.
+  EXPECT_EQ(peak_concurrency(), 1);
+  dlclose(stub);
+#endif
 }
 
 TEST(YuanRongStoreBackendTest, DefaultRequestTimeoutIsBounded) {

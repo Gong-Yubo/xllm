@@ -20,6 +20,7 @@ limitations under the License.
 // exercised for real without a YuanRong cluster. Only the service behind the
 // ABI is replaced; the backend under test is the production code.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -46,6 +47,24 @@ struct StubStore {
 
 // Creation has no store to report to, so it keeps its own error.
 thread_local std::string g_last_error;
+
+// Observes whether the backend ever lets two calls into the shared client at
+// once. Production bridge calls are serialized by the backend's mutex, so the
+// peak must stay at one even with several prefetch threads.
+std::atomic<int32_t> g_active_calls{0};
+std::atomic<int32_t> g_peak_calls{0};
+
+class CallProbe final {
+ public:
+  CallProbe() {
+    const int32_t active = g_active_calls.fetch_add(1) + 1;
+    int32_t peak = g_peak_calls.load();
+    while (peak < active && !g_peak_calls.compare_exchange_weak(peak, active)) {
+    }
+  }
+
+  ~CallProbe() { g_active_calls.fetch_sub(1); }
+};
 
 bool set_error(StubStore* store, const std::string& message) {
   if (store != nullptr) {
@@ -110,6 +129,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
     const char* const* keys,
     const XllmYrStoreBuffer* buffers,
     size_t count) {
+  CallProbe probe;
   auto* store = static_cast<StubStore*>(opaque);
   if (store == nullptr) {
     return set_error(store, "stub client is null");
@@ -137,6 +157,7 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mget(
     XllmYrStoreBuffer* buffers,
     uint8_t* statuses,
     size_t count) {
+  CallProbe probe;
   auto* store = static_cast<StubStore*>(opaque);
   if (store == nullptr) {
     return set_error(store, "stub client is null");
@@ -181,4 +202,16 @@ xllm_yr_store_last_error(void* opaque) {
     return store->last_error.c_str();
   }
   return g_last_error.c_str();
+}
+
+// Test-only probes, not part of the production C ABI.
+extern "C" __attribute__((visibility("default"))) int32_t
+xllm_yr_store_stub_peak_concurrency() {
+  return g_peak_calls.load();
+}
+
+extern "C" __attribute__((visibility("default"))) void
+xllm_yr_store_stub_reset_concurrency() {
+  g_active_calls.store(0);
+  g_peak_calls.store(0);
 }

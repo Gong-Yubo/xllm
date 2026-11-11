@@ -50,6 +50,7 @@ YuanRongStoreBackend::YuanRongStoreBackend(YuanRongStoreConfig config)
     : config_(std::move(config)) {}
 
 YuanRongStoreBackend::~YuanRongStoreBackend() {
+  std::lock_guard<std::mutex> lock(bridge_mutex_);
   if (bridge_client_ != nullptr) {
     bridge_destroy_(bridge_client_);
     bridge_client_ = nullptr;
@@ -126,11 +127,12 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_put(
   std::vector<const char*> raw_keys;
   encode_keys(keys, &encoded_keys, &raw_keys);
 
+  std::lock_guard<std::mutex> lock(bridge_mutex_);
   if (!bridge_mset_(bridge_client_,
                     raw_keys.data(),
                     bridge_buffers.data(),
                     raw_keys.size())) {
-    LOG(ERROR) << "YuanRong store MSet failed: " << last_error();
+    LOG(ERROR) << "YuanRong store MSet failed: " << last_error_locked();
     return statuses;
   }
   return std::vector<uint8_t>(keys.size(), /*value=*/1);
@@ -163,13 +165,14 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_get(
   // One SDK Get for the whole prefetch. The bridge fills one status byte per
   // key: a partial hit is still a successful call, and a missing object only
   // clears its own byte.
+  std::lock_guard<std::mutex> lock(bridge_mutex_);
   if (!bridge_mget_(bridge_client_,
                     raw_keys.data(),
                     bridge_buffers.data(),
                     statuses.data(),
                     raw_keys.size())) {
     LOG(ERROR) << "YuanRong store MGet failed for " << keys.size()
-               << " keys: " << last_error();
+               << " keys: " << last_error_locked();
     return std::vector<uint8_t>(keys.size(), /*value=*/0);
   }
   return statuses;
@@ -181,7 +184,7 @@ bool YuanRongStoreBackend::get(const std::string& key,
   return !statuses.empty() && statuses[0] != 0;
 }
 
-const char* YuanRongStoreBackend::last_error() const {
+const char* YuanRongStoreBackend::last_error_locked() const {
   if (bridge_last_error_ == nullptr) {
     return "bridge not loaded";
   }
@@ -228,6 +231,9 @@ bool YuanRongStoreBackend::load_bridge() {
 }
 
 bool YuanRongStoreBackend::ensure_initialized() {
+  // Lazy initialization is reachable from every prefetch thread, so the
+  // dlopen, symbol resolution and client creation share the call mutex.
+  std::lock_guard<std::mutex> lock(bridge_mutex_);
   if (bridge_client_ != nullptr) {
     return true;
   }
@@ -243,7 +249,7 @@ bool YuanRongStoreBackend::ensure_initialized() {
       bridge_create_(config_.host.c_str(), config_.port, config_.timeout_ms);
   if (bridge_client_ == nullptr) {
     LOG(ERROR) << "YuanRong store client create failed for " << config_.host
-               << ":" << config_.port << ": " << last_error();
+               << ":" << config_.port << ": " << last_error_locked();
     return false;
   }
   LOG(INFO) << "YuanRong store backend ready, worker=" << config_.host << ":"
