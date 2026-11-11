@@ -79,11 +79,14 @@ cc_library(
     hierarchy_kv_cache_transfer.h
     $<$<OR:$<BOOL:${USE_NPU}>,$<BOOL:${USE_MLU}>,$<BOOL:${USE_DCU}>>:mooncake_kv_cache_transfer.h>
     mooncake_kv_cache_transfer_engine.h
+    kv_cache_store_backend.h
+    $<$<BOOL:${USE_YUANRONG}>:yuanrong_store_backend.h>
   SRCS
     kv_cache_transfer.cpp
     kv_transport_codec.cpp
     kv_cache_store.cpp
     mooncake_store_backend.cpp
+    $<$<BOOL:${USE_YUANRONG}>:yuanrong_store_backend.cpp>
     host_transfer/layout.cpp
     host_transfer/transfer.cpp
     host_transfer/transfer_utils.cpp
@@ -113,4 +116,62 @@ cc_library(
     $<$<BOOL:${USE_NPU}>:platform_npu>
     $<$<BOOL:${USE_DCU}>:hip::host>
     $<$<BOOL:${USE_MLU}>:mlu_kernels>
+    $<$<BOOL:${USE_YUANRONG}>:${CMAKE_DL_LIBS}>
 )
+
+# The YuanRong SDK is never linked into the main binary: YuanRongStoreBackend
+# talks to it through a pure C ABI bridge, and only this shim links
+# libdatasystem.
+if(USE_YUANRONG)
+  file(WRITE "${CMAKE_BINARY_DIR}/xllm_yuanrong_bridge_symbols.map"
+       "{\n  global:\n    xllm_yr_store_*;\n  local:\n    *;\n};\n")
+  add_library(xllm_yuanrong_store_bridge SHARED
+    yuanrong_store_bridge.cpp
+  )
+  target_include_directories(xllm_yuanrong_store_bridge
+    PRIVATE
+      ${COMMON_INCLUDE_DIRS}
+      "${YUANRONG_INCLUDE_DIR}"
+  )
+  target_link_libraries(xllm_yuanrong_store_bridge
+    PRIVATE
+      "${YUANRONG_LIBRARY}"
+  )
+  # Both flags are GNU/LLVM ld features on ELF, not compiler properties:
+  # CMAKE_CXX_COMPILER_ID would also match AppleClang, whose ld64 rejects them.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(xllm_yuanrong_store_bridge
+      PRIVATE
+        # The top-level link_libraries(cust_opapi) and --export-dynamic used by
+        # the main binary would otherwise leave unused Ascend/NPU DT_NEEDED
+        # entries on this shim. dlopen would then pull that runtime into the
+        # process. --as-needed drops them; the version script hides symbols.
+        "LINKER:--as-needed"
+        "LINKER:--version-script=${CMAKE_BINARY_DIR}/xllm_yuanrong_bridge_symbols.map")
+  endif()
+  option(XLLM_YUANRONG_LINK_CHECK
+         "Assert the YuanRong bridge's DT_NEEDED/exported-symbol contract after linking"
+         ON)
+  if(XLLM_YUANRONG_LINK_CHECK AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_custom_command(TARGET xllm_yuanrong_store_bridge POST_BUILD
+      COMMAND ${CMAKE_COMMAND}
+        "-DBRIDGE_LIBRARY=$<TARGET_FILE:xllm_yuanrong_store_bridge>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/check_yuanrong_bridge.cmake"
+      COMMENT "Checking the YuanRong bridge link contract"
+      VERBATIM)
+  endif()
+  set_target_properties(xllm_yuanrong_store_bridge PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/xllm/core/server"
+    BUILD_RPATH "$ORIGIN;${YUANRONG_LIB_DIR}"
+    INSTALL_RPATH "$ORIGIN;${YUANRONG_LIB_DIR}"
+  )
+  # dlopen resolves a bare library name through the caller's RUNPATH, which is
+  # $ORIGIN, so the shim has to sit next to the xllm artifact.
+  if(GENERATE_SO)
+    set(XLLM_YUANRONG_BRIDGE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR})
+  else()
+    set(XLLM_YUANRONG_BRIDGE_INSTALL_DIR ${CMAKE_INSTALL_BINDIR})
+  endif()
+  install(TARGETS xllm_yuanrong_store_bridge
+    LIBRARY DESTINATION ${XLLM_YUANRONG_BRIDGE_INSTALL_DIR})
+endif()

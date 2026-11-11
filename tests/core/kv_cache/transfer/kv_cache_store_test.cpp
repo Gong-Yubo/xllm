@@ -89,7 +89,7 @@ class KVCacheStoreTestPeer final {
     return KVCacheStore::get_store_device_names(config);
   }
 
-  static std::optional<MooncakeMultiBuffer> multi_buffer(
+  static std::optional<StoreBuffer> multi_buffer(
       const KVCacheStore& store,
       std::vector<BlockTransferInfo> block_transfer_info) {
     Slice<BlockTransferInfo> slice(block_transfer_info);
@@ -107,8 +107,8 @@ class KVCacheStoreTestPeer final {
 
 class MooncakeStoreBackendTestPeer final {
  public:
-  static std::optional<std::vector<MooncakeRegisteredRange>> unique_ranges(
-      const std::vector<MooncakeRegisteredRange>& ranges) {
+  static std::optional<std::vector<StoreRange>> unique_ranges(
+      const std::vector<StoreRange>& ranges) {
     return MooncakeStoreBackend::unique_ranges(ranges);
   }
 
@@ -476,7 +476,7 @@ TEST(KVCacheStoreTest, BuildsMultiBufferForRequestedHostBlock) {
 
   const std::vector<BlockTransferInfo> block_info = {
       make_block_info(12, BlockType::KV, /*destination_block_id=*/1)};
-  const std::optional<MooncakeMultiBuffer> buffer =
+  const std::optional<StoreBuffer> buffer =
       KVCacheStoreTestPeer::multi_buffer(store, block_info);
   ASSERT_TRUE(buffer.has_value());
   ASSERT_EQ(buffer->addresses.size(), 2U);
@@ -556,6 +556,24 @@ TEST(MooncakeStoreBackendTest, ValidatesRegistrationRangesBeforeSetup) {
                    {{reinterpret_cast<void*>(UINTPTR_MAX - 7), 8}})
                    .has_value());
 }
+
+#if defined(USE_YUANRONG)
+TEST(YuanRongStoreBackendTest, StoreInitFailsInsteadOfFallingBackToMooncake) {
+  KVCache host_cache = make_attention_cache(/*host_blocks=*/4, /*width=*/8);
+  HostCacheStoreIndex index;
+  index[BlockType::KV].emplace_back(
+      HostCacheStoreEntry{/*cache_handle=*/0, "main", &host_cache});
+
+  KVCacheStoreInitConfig config = make_store_config();
+  config.backend = "yuanrong";
+  config.yuanrong_bridge_path = "/nonexistent/libxllm_yuanrong_store_bridge.so";
+
+  // Falling back to Mooncake here would put blocks somewhere the operator did
+  // not ask for, so init has to fail.
+  KVCacheStore store;
+  EXPECT_FALSE(store.init(config, std::move(index)));
+}
+#endif
 
 }  // namespace
 }  // namespace xllm
