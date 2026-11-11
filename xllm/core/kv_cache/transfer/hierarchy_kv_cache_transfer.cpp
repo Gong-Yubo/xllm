@@ -229,8 +229,12 @@ bool HierarchyKVCacheTransfer::finalize_registration() {
               << ", kv_split_rank=" << store_config.kv_split_rank
               << ", enable_mla=" << store_config.enable_mla;
     kv_cache_store_ = std::make_unique<KVCacheStore>();
-    CHECK(kv_cache_store_->init(store_config, std::move(store_index)))
-        << "Failed to initialize the KV cache store.";
+    // A misconfigured store is a start-up error, not a process abort: init()
+    // reports the offending flag, and the caller can fail registration cleanly.
+    if (!kv_cache_store_->init(store_config, std::move(store_index))) {
+      LOG(ERROR) << "Failed to initialize the KV cache store.";
+      return false;
+    }
     LOG(INFO) << "[KVCacheStore][StoreEngine] ready, endpoint="
               << store_local_hostname << ", protocol=" << store_config.protocol
               << ", worker_rank=" << options_.store_worker_id()

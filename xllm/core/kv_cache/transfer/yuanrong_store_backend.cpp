@@ -19,8 +19,9 @@ limitations under the License.
 #include <glog/logging.h>
 
 #include <cstring>
-#include <limits>
 #include <utility>
+
+#include "core/kv_cache/transfer/store_config_validation.h"
 
 namespace xllm {
 namespace {
@@ -81,18 +82,16 @@ bool YuanRongStoreBackend::marshal_buffers(
   }
   bridge_buffers->reserve(buffers.size());
   for (size_t index = 0; index < buffers.size(); ++index) {
-    bridge_buffers->push_back(
-        BridgeBuffer{buffers[index].addresses.data(),
-                     (*size_storage)[index].data(),
-                     (*size_storage)[index].size()});
+    bridge_buffers->push_back(BridgeBuffer{buffers[index].addresses.data(),
+                                           (*size_storage)[index].data(),
+                                           (*size_storage)[index].size()});
   }
   return true;
 }
 
-void YuanRongStoreBackend::encode_keys(
-    const std::vector<std::string>& keys,
-    std::vector<std::string>* encoded,
-    std::vector<const char*>* raw) {
+void YuanRongStoreBackend::encode_keys(const std::vector<std::string>& keys,
+                                       std::vector<std::string>* encoded,
+                                       std::vector<const char*>* raw) {
   encoded->reserve(keys.size());
   for (const std::string& key : keys) {
     encoded->emplace_back(encode_key(key));
@@ -235,8 +234,11 @@ bool YuanRongStoreBackend::ensure_initialized() {
   if (!load_bridge()) {
     return false;
   }
-  CHECK_GE(config_.port, 0);
-  CHECK_LE(config_.port, std::numeric_limits<uint16_t>::max());
+  if (!is_valid_yuanrong_port(config_.port)) {
+    LOG(ERROR) << "Invalid store_yuanrong_port=" << config_.port
+               << "; expected 0..65535 (0 lets the SDK choose its default).";
+    return false;
+  }
   bridge_client_ =
       bridge_create_(config_.host.c_str(), config_.port, config_.timeout_ms);
   if (bridge_client_ == nullptr) {

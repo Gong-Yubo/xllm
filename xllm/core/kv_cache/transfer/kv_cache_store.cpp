@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 
 #include "core/kv_cache/transfer/mooncake_store_backend.h"
+#include "core/kv_cache/transfer/store_config_validation.h"
 #include "util/hash_util.h"
 
 #if defined(USE_YUANRONG)
@@ -54,11 +55,20 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
   CHECK_GE(config.kv_split_size, 1);
   CHECK_GE(config.kv_split_rank, 0);
   CHECK_LT(config.kv_split_rank, config.kv_split_size);
+  // Dispatch on the backend name, not just on "is this YuanRong?". An unknown
+  // value would otherwise fall through to Mooncake and silently start the
+  // wrong store -- the same failure mode as a dropped CLI option.
+  if (!is_supported_store_backend(config.backend)) {
+    LOG(ERROR) << "Unknown store_backend=" << config.backend
+               << "; supported values are '" << kStoreBackendMooncake
+               << "' and '" << kStoreBackendYuanRong << "'.";
+    return false;
+  }
   config_ = config;
   initialize_store_index(std::move(store_index));
 
 #if defined(USE_YUANRONG)
-  if (config_.backend == "yuanrong") {
+  if (config_.backend == kStoreBackendYuanRong) {
     YuanRongStoreConfig store_config;
     if (!config_.yuanrong_host.empty()) {
       store_config.host = config_.yuanrong_host;
@@ -80,8 +90,10 @@ bool KVCacheStore::init(const KVCacheStoreInitConfig& config,
     return true;
   }
 #else
-  CHECK(config_.backend != "yuanrong")
-      << "store_backend=yuanrong requires a build with USE_YUANRONG.";
+  if (config_.backend == kStoreBackendYuanRong) {
+    LOG(ERROR) << "store_backend=yuanrong requires a build with USE_YUANRONG.";
+    return false;
+  }
 #endif
 
   const std::optional<std::vector<StoreRange>> ranges = collect_ranges();
