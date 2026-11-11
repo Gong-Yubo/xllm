@@ -31,6 +31,7 @@ limitations under the License.
 #include "core/distributed_runtime/engine_dispatch.h"
 #include "core/distributed_runtime/kv_cache_transfer_coordinator.h"
 #include "core/distributed_runtime/model_residency_coordinator.h"
+#include "core/distributed_runtime/store_options.h"
 #include "core/framework/config/execution_config.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/load_config.h"
@@ -221,6 +222,9 @@ VLMMaster::VLMMaster(const Options& options) : Master(options) {
       .max_tokens_for_graph_mode(options_.max_tokens_for_graph_mode())
       .max_tokens_per_chunk_for_prefill(
           options_.max_tokens_per_chunk_for_prefill());
+  // Both the ordinary and the speculative engine below share this one
+  // engine_options object, so one copy covers both VLM paths.
+  apply_store_options(&engine_options, options_);
 
   if (use_speculative_engine) {
     CHECK(!options_.enable_disagg_pd())
@@ -260,17 +264,7 @@ VLMMaster::VLMMaster(const Options& options) : Master(options) {
             options_.adaptive_target_verify_calibration())
         .kv_cache_transfer_mode(options_.kv_cache_transfer_mode())
         .transfer_listen_port(options_.transfer_listen_port())
-        .host_blocks_factor(options_.host_blocks_factor())
-        .enable_kvcache_store(options_.enable_kvcache_store())
-        .store_protocol(options_.store_protocol())
-        .store_rdma_devices(options_.store_rdma_devices())
-        .store_master_server_address(options_.store_master_server_address())
-        .store_metadata_server(options_.store_metadata_server())
-        .store_local_hostname(options_.store_local_hostname())
-        .prefetch_batch_size(options_.prefetch_batch_size())
-        .prefetch_timeout(options_.prefetch_timeout())
-        .layers_wise_copy_batchs(options_.layers_wise_copy_batchs())
-        .kv_cache_dtype(options_.kv_cache_dtype());
+        .host_blocks_factor(options_.host_blocks_factor());
     speculative_engine_ =
         std::make_unique<SpeculativeEngineBase<VLMEngine>>(engine_options);
     draft_model_residency_coordinator_ =

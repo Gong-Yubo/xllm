@@ -1,5 +1,39 @@
 include(cc_test)
 
+# Pure configuration guards: run in every build, independent of the store
+# backend that was compiled in.
+cc_test(
+  NAME
+    store_config_validation_test
+  CPU_ONLY
+  SRCS
+    store_config_validation_test.cpp
+  DEPS
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
+    store_ranges_test
+  CPU_ONLY
+  SRCS
+    store_ranges_test.cpp
+  DEPS
+    GTest::gtest_main
+)
+
+# In-process failure/latency statistics used by the re-test harness. Header
+# only, so this runs in every build regardless of the compiled store backend.
+cc_test(
+  NAME
+    store_metrics_test
+  CPU_ONLY
+  SRCS
+    store_metrics_test.cpp
+  DEPS
+    GTest::gtest_main
+)
+
 cc_test(
   NAME
     host_kv_transfer_test
@@ -90,6 +124,9 @@ cc_test(
     GTest::gtest_main
 )
 
+endif()
+
+if(USE_NPU OR USE_MLU)
 cc_test(
   NAME
     basic_host_kv_transfer_test

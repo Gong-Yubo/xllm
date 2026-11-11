@@ -23,7 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "core/kv_cache/storage/kv_cache.h"
-#include "core/kv_cache/transfer/mooncake_store_backend.h"
+#include "core/kv_cache/transfer/kv_cache_store_backend.h"
 #include "framework/model/model_params_view.h"
 #include "util/slice.h"
 
@@ -52,6 +52,18 @@ struct KVCacheStoreInitConfig {
   int32_t kv_split_rank = 0;
   bool write_enabled = true;
   bool enable_mla = false;
+  // Which backend stores the offloaded blocks. "mooncake" is the peer-to-peer
+  // store already wired into the transfer engine; "yuanrong" is the
+  // content-addressed host store. Selecting "yuanrong" requires a build with
+  // USE_YUANRONG.
+  std::string backend = "mooncake";
+  // YuanRong worker endpoint, only read when backend is "yuanrong".
+  // An empty host falls back to 127.0.0.1 in the backend itself.
+  std::string yuanrong_host;
+  int32_t yuanrong_port = 0;
+  // One store request's deadline; connect timeout is set by the bridge.
+  int32_t yuanrong_timeout_ms = 500;
+  std::string yuanrong_bridge_path;
 };
 
 class KVCacheStore final {
@@ -131,16 +143,16 @@ class KVCacheStore final {
       const std::vector<uint8_t>& physical_results);
   static std::optional<std::string> get_store_device_names(
       const KVCacheStoreInitConfig& config);
-  std::optional<MooncakeMultiBuffer> build_multi_buffer(const StoreEntry& entry,
-                                                        int32_t block_id) const;
-  std::optional<std::vector<MooncakeRegisteredRange>> collect_ranges() const;
+  std::optional<StoreBuffer> build_multi_buffer(const StoreEntry& entry,
+                                                int32_t block_id) const;
+  std::optional<std::vector<StoreRange>> collect_ranges() const;
 
  private:
   bool is_initialized_ = false;
   KVCacheStoreInitConfig config_;
   std::map<BlockType, std::vector<StoreEntry>> store_index_;
   size_t max_entries_per_type_ = 0;
-  std::unique_ptr<MooncakeStoreBackend> backend_;
+  std::unique_ptr<KVCacheStoreBackend> backend_;
 };
 
 }  // namespace xllm
