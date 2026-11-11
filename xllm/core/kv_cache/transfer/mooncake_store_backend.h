@@ -25,6 +25,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "core/kv_cache/transfer/kv_cache_store_backend.h"
+
 namespace xllm {
 
 struct MooncakeStoreBackendConfig {
@@ -34,35 +36,33 @@ struct MooncakeStoreBackendConfig {
   std::string metadata_server;
   std::string master_server_address;
   int32_t replica_num = 1;
+  // Local DRAM the client mounts into the store pool. A zero value makes
+  // setup_real skip MountSegment, leaving the client with no storage capacity,
+  // so KVCacheStore always sizes it from the host cache before calling init.
+  size_t global_segment_size = 0;
 };
 
-struct MooncakeRegisteredRange {
-  void* address = nullptr;
-  size_t bytes = 0;
-};
-
-struct MooncakeMultiBuffer {
-  std::vector<void*> addresses;
-  std::vector<size_t> sizes;
-};
-
-class MooncakeStoreBackend final {
+class MooncakeStoreBackend final : public KVCacheStoreBackend {
  public:
   MooncakeStoreBackend() = default;
-  ~MooncakeStoreBackend();
+  ~MooncakeStoreBackend() override;
 
   bool init(const MooncakeStoreBackendConfig& config,
-            const std::vector<MooncakeRegisteredRange>& ranges);
+            const std::vector<StoreRange>& ranges);
+
+  bool register_ranges(const std::vector<StoreRange>& ranges);
+
   std::vector<uint8_t> batch_put(
       const std::vector<std::string>& keys,
-      const std::vector<MooncakeMultiBuffer>& buffers);
-  bool get(const std::string& key, const MooncakeMultiBuffer& buffer);
+      const std::vector<StoreBuffer>& buffers) override;
+
+  bool get(const std::string& key, const StoreBuffer& buffer) override;
 
  private:
   friend class MooncakeStoreBackendTestPeer;
 
-  static std::optional<std::vector<MooncakeRegisteredRange>> unique_ranges(
-      const std::vector<MooncakeRegisteredRange>& ranges);
+  static std::optional<std::vector<StoreRange>> unique_ranges(
+      const std::vector<StoreRange>& ranges);
   static bool get_succeeded(int64_t expected_bytes,
                             const std::vector<int>& results);
   static bool put_succeeded(int result);
@@ -71,7 +71,7 @@ class MooncakeStoreBackend final {
  private:
   mooncake::ReplicateConfig rep_config_;
   std::shared_ptr<mooncake::RealClient> client_ptr_;
-  std::vector<MooncakeRegisteredRange> registered_ranges_;
+  std::vector<StoreRange> registered_ranges_;
 };
 
 }  // namespace xllm

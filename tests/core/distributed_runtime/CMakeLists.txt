@@ -214,3 +214,14 @@ cc_test(
     brpc
     glog::glog
 )
+
+# Header-only options copy; no runtime dependency beyond the options structs.
+cc_test(
+  CPU_ONLY
+  NAME
+    store_options_test
+  SRCS
+    store_options_test.cpp
+  DEPS
+    GTest::gtest_main
+)
