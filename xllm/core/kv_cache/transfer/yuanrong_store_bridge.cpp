@@ -42,6 +42,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "core/kv_cache/transfer/store_config_validation.h"
+
 extern "C" {
 
 // One logical object's payload: non-contiguous host ranges concatenated in
@@ -61,7 +63,6 @@ namespace {
 // miss has to fail fast instead of holding a prefetch thread. SDK defaults are
 // 9 s for connect and 0 (unbounded) for requests.
 constexpr int32_t kConnectTimeoutMs = 10000;
-constexpr int32_t kFallbackRequestTimeoutMs = 500;
 
 struct StoreClient {
   std::unique_ptr<datasystem::KVClient> client;
@@ -114,7 +115,7 @@ std::string flatten(const XllmYrStoreBuffer& buffer) {
 // "wait for the object to become ready" argument: DataSystem 9.9.9 dropped
 // that third Get parameter, and the 0.9.3 default (0) means waiting without
 // a deadline. A non-positive value would therefore reintroduce the
-// minute-long stalls seen in the v4 test, so clamp it to the CLI default.
+// minute-long stalls seen in the v4 test, so clamp it to the shared default.
 extern "C" __attribute__((visibility("default"))) void* xllm_yr_store_create(
     const char* host,
     int32_t port,
@@ -126,7 +127,7 @@ extern "C" __attribute__((visibility("default"))) void* xllm_yr_store_create(
     options.port = port;
     options.connectTimeoutMs = kConnectTimeoutMs;
     options.requestTimeoutMs =
-        request_timeout_ms > 0 ? request_timeout_ms : kFallbackRequestTimeoutMs;
+        xllm::normalize_store_request_timeout_ms(request_timeout_ms);
     store->client = std::make_unique<datasystem::KVClient>(options);
     const auto status = store->client->Init();
     if (status.IsError()) {

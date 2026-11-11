@@ -46,5 +46,28 @@ TEST(StoreConfigValidationTest, AcceptsSdkDefaultPortButRejectsOutOfRange) {
   EXPECT_FALSE(is_valid_yuanrong_port(std::numeric_limits<int32_t>::max()));
 }
 
+TEST(StoreConfigValidationTest, ClampsNonPositiveRequestTimeouts) {
+  static_assert(normalize_store_request_timeout_ms(0) ==
+                kDefaultStoreRequestTimeoutMs);
+
+  // 0 is the SDK's "no deadline" default. The v4 run stalled for a minute
+  // when it leaked into the per-call Get timeout, so the bridge must clamp it
+  // (and anything else non-positive) back to the bounded CLI default.
+  EXPECT_EQ(normalize_store_request_timeout_ms(0),
+            kDefaultStoreRequestTimeoutMs);
+  EXPECT_EQ(normalize_store_request_timeout_ms(-1),
+            kDefaultStoreRequestTimeoutMs);
+  EXPECT_EQ(
+      normalize_store_request_timeout_ms(std::numeric_limits<int32_t>::min()),
+      kDefaultStoreRequestTimeoutMs);
+
+  // Positive values are deliberate user choices and pass through untouched.
+  EXPECT_EQ(normalize_store_request_timeout_ms(1), 1);
+  EXPECT_EQ(normalize_store_request_timeout_ms(1234), 1234);
+  EXPECT_EQ(
+      normalize_store_request_timeout_ms(std::numeric_limits<int32_t>::max()),
+      std::numeric_limits<int32_t>::max());
+}
+
 }  // namespace
 }  // namespace xllm

@@ -358,9 +358,10 @@ TEST(YuanRongStoreBackendTest, SerializesConcurrentPrefetchThreads) {
 }
 
 TEST(YuanRongStoreBackendTest, DefaultRequestTimeoutIsBounded) {
-  // A cache miss must fail fast. The old 60000 ms default let a prefetch hold
-  // a thread for a minute; guard against reintroducing it here as well.
+  // The config default and the bridge's clamp must stay on the same constant.
+  // The clamp's boundary behaviour is covered by store_config_validation_test.
   const YuanRongStoreConfig config{};
+  EXPECT_EQ(config.timeout_ms, kDefaultStoreRequestTimeoutMs);
   EXPECT_TRUE(config.timeout_ms > 0);
   EXPECT_TRUE(config.timeout_ms <= 1000);
 }

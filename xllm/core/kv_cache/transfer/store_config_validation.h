@@ -38,4 +38,13 @@ inline bool is_valid_yuanrong_port(int32_t port) {
   return port >= 0 && port <= std::numeric_limits<uint16_t>::max();
 }
 
+// One store request's deadline, shared by the CLI defaults and the bridge's
+// clamp. A non-positive value would restore the unbounded SDK default (0)
+// that caused the minute-long stalls in the v4 test.
+inline constexpr int32_t kDefaultStoreRequestTimeoutMs = 500;
+
+constexpr int32_t normalize_store_request_timeout_ms(int32_t requested_ms) {
+  return requested_ms > 0 ? requested_ms : kDefaultStoreRequestTimeoutMs;
+}
+
 }  // namespace xllm

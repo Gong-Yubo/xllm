@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "core/kv_cache/transfer/kv_cache_store_backend.h"
+#include "core/kv_cache/transfer/store_config_validation.h"
 
 namespace xllm {
 
@@ -30,8 +31,8 @@ struct YuanRongStoreConfig {
   // Upper bound on one store request, not a connection timeout and not a
   // "wait until the object is ready" deadline. A cache miss must fail fast:
   // the v4 test showed 60 s stalls when this value was also used as the
-  // per-call Get sub-timeout. The bridge applies the same clamp.
-  int32_t timeout_ms = 500;
+  // per-call Get sub-timeout. The bridge applies the same normalizer.
+  int32_t timeout_ms = kDefaultStoreRequestTimeoutMs;
   // Path to libxllm_yuanrong_store_bridge.so. Empty means the default
   // library name, resolved through the loader path.
   std::string bridge_path;
