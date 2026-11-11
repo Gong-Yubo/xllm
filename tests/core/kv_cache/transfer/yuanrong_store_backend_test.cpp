@@ -357,6 +357,35 @@ TEST(YuanRongStoreBackendTest, SerializesConcurrentPrefetchThreads) {
 #endif
 }
 
+TEST(YuanRongStoreBackendTest, RecordsStoreCallMetrics) {
+  YuanRongStoreBackend backend(make_yuanrong_config());
+  ASSERT_TRUE(backend.initialize());
+  BlockPayload payload(0x31, 0x32);
+  ASSERT_EQ(backend.batch_put({"metrics/blk"}, {payload.buffer()}).size(), 1U);
+  ASSERT_TRUE(backend.get("metrics/blk", payload.buffer()));
+
+  const auto snapshot = backend.store_metrics();
+  EXPECT_EQ(snapshot.calls, 2u);
+  EXPECT_EQ(snapshot.successes, 2u);
+  EXPECT_EQ(snapshot.failures, 0u);
+  EXPECT_EQ(snapshot.samples, 2u);
+  EXPECT_TRUE(snapshot.total_us >= 0);
+
+  // A start-up failure must be visible as a failed call too, not silently
+  // missing from the distribution that a re-test would use to judge hit rate.
+  YuanRongStoreConfig broken;
+  broken.bridge_path = "/nonexistent/libxllm_yuanrong_store_bridge.so";
+  YuanRongStoreBackend failed_backend(broken);
+  failed_backend.batch_put({"metrics/blk"}, {payload.buffer()});
+  const auto failed_snapshot = failed_backend.store_metrics();
+  EXPECT_EQ(failed_snapshot.calls, 1u);
+  EXPECT_EQ(failed_snapshot.failures, 1u);
+  EXPECT_EQ(
+      failed_snapshot
+          .failures_by_kind[static_cast<size_t>(StoreFailureKind::kSdkOther)],
+      1u);
+}
+
 TEST(YuanRongStoreBackendTest, DefaultRequestTimeoutIsBounded) {
   // The config default and the bridge's clamp must stay on the same constant.
   // The clamp's boundary behaviour is covered by store_config_validation_test.

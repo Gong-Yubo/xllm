@@ -22,6 +22,18 @@ cc_test(
     GTest::gtest_main
 )
 
+# In-process failure/latency statistics used by the re-test harness. Header
+# only, so this runs in every build regardless of the compiled store backend.
+cc_test(
+  NAME
+    store_metrics_test
+  CPU_ONLY
+  SRCS
+    store_metrics_test.cpp
+  DEPS
+    GTest::gtest_main
+)
+
 # The production bridge is compiled unchanged; only the SDK header behind its
 # C ABI is replaced. The backend tests swap out the whole bridge, so without
 # this target the flattening, error handling and per-key status mapping are

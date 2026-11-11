@@ -18,7 +18,9 @@ limitations under the License.
 #include <dlfcn.h>
 #include <glog/logging.h>
 
+#include <chrono>
 #include <cstring>
+#include <string>
 #include <utility>
 
 #include "core/kv_cache/transfer/store_config_validation.h"
@@ -45,6 +47,65 @@ std::string encode_key(const std::string& key) {
   }
   return encoded;
 }
+
+// Records one put/get at the backend boundary. The v4 logs had no way to tell
+// a not-found from a transport error, or to see the in-process latency
+// distribution; both are needed to interpret the next 32K re-test.
+class ScopedStoreCall {
+ public:
+  ScopedStoreCall(StoreCallMetrics* metrics, const char* op, size_t keys)
+      : metrics_(metrics),
+        op_(op),
+        keys_(keys),
+        start_(std::chrono::steady_clock::now()) {}
+
+  ~ScopedStoreCall() {
+    const auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start_)
+            .count();
+    const StoreFailureKind kind =
+        success_ ? StoreFailureKind::kNone : classify_store_failure(error_);
+    const bool report = metrics_->record(success_, elapsed_us, kind);
+    VLOG(2) << "[KVCacheStore][YuanRong] op=" << op_ << " keys=" << keys_
+            << " success=" << success_ << " elapsed_us=" << elapsed_us
+            << " error=" << (success_ ? "" : error_);
+    if (!report) {
+      return;
+    }
+    const auto snapshot = metrics_->snapshot();
+    VLOG(1) << "[KVCacheStore][YuanRong] metrics calls=" << snapshot.calls
+            << " success=" << snapshot.successes
+            << " failed=" << snapshot.failures << " p50_us=" << snapshot.p50_us
+            << " p99_us=" << snapshot.p99_us << " max_us=" << snapshot.max_us
+            << " samples=" << snapshot.samples << " not_found="
+            << snapshot.failures_by_kind[static_cast<size_t>(
+                   StoreFailureKind::kKeyNotFound)]
+            << " timeout="
+            << snapshot.failures_by_kind[static_cast<size_t>(
+                   StoreFailureKind::kTimeout)]
+            << " transport="
+            << snapshot.failures_by_kind[static_cast<size_t>(
+                   StoreFailureKind::kTransport)]
+            << " sdk_other="
+            << snapshot.failures_by_kind[static_cast<size_t>(
+                   StoreFailureKind::kSdkOther)];
+  }
+
+  void succeed() { success_ = true; }
+  void fail(const char* error) {
+    error_ =
+        error == nullptr || error[0] == '\0' ? "unknown store error" : error;
+  }
+
+ private:
+  StoreCallMetrics* metrics_;
+  const char* op_;
+  size_t keys_;
+  std::chrono::steady_clock::time_point start_;
+  bool success_ = false;
+  std::string error_ = "store call did not complete";
+};
 
 }  // namespace
 
@@ -108,13 +169,20 @@ void YuanRongStoreBackend::encode_keys(const std::vector<std::string>& keys,
 std::vector<uint8_t> YuanRongStoreBackend::batch_put(
     const std::vector<std::string>& keys,
     const std::vector<StoreBuffer>& buffers) {
+  ScopedStoreCall call(&metrics_, "MSet", keys.size());
   std::vector<uint8_t> statuses(keys.size(), /*value=*/0);
   if (keys.size() != buffers.size()) {
     LOG(ERROR) << "YuanRong store put requires one buffer per key, keys="
                << keys.size() << ", buffers=" << buffers.size();
+    call.fail("put key/buffer count mismatch");
     return statuses;
   }
-  if (keys.empty() || !ensure_initialized()) {
+  if (keys.empty()) {
+    call.succeed();
+    return statuses;
+  }
+  if (!ensure_initialized()) {
+    call.fail("bridge not loaded");
     return statuses;
   }
 
@@ -122,6 +190,7 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_put(
   std::vector<BridgeBuffer> bridge_buffers;
   if (!marshal_buffers(buffers, &size_storage, &bridge_buffers)) {
     LOG(ERROR) << "YuanRong store put buffer has mismatched range arrays";
+    call.fail("put buffer has mismatched range arrays");
     return statuses;
   }
 
@@ -134,22 +203,32 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_put(
                     raw_keys.data(),
                     bridge_buffers.data(),
                     raw_keys.size())) {
-    LOG(ERROR) << "YuanRong store MSet failed: " << last_error_locked();
+    const char* error = last_error_locked();
+    LOG(ERROR) << "YuanRong store MSet failed: " << error;
+    call.fail(error);
     return statuses;
   }
+  call.succeed();
   return std::vector<uint8_t>(keys.size(), /*value=*/1);
 }
 
 std::vector<uint8_t> YuanRongStoreBackend::batch_get(
     const std::vector<std::string>& keys,
     const std::vector<StoreBuffer>& buffers) {
+  ScopedStoreCall call(&metrics_, "MGet", keys.size());
   std::vector<uint8_t> statuses(keys.size(), /*value=*/0);
   if (keys.size() != buffers.size()) {
     LOG(ERROR) << "YuanRong store get requires one buffer per key, keys="
                << keys.size() << ", buffers=" << buffers.size();
+    call.fail("get key/buffer count mismatch");
     return statuses;
   }
-  if (keys.empty() || !ensure_initialized()) {
+  if (keys.empty()) {
+    call.succeed();
+    return statuses;
+  }
+  if (!ensure_initialized()) {
+    call.fail("bridge not loaded");
     return statuses;
   }
 
@@ -157,6 +236,7 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_get(
   std::vector<BridgeBuffer> bridge_buffers;
   if (!marshal_buffers(buffers, &size_storage, &bridge_buffers)) {
     LOG(ERROR) << "YuanRong store get buffer has mismatched range arrays";
+    call.fail("get buffer has mismatched range arrays");
     return statuses;
   }
 
@@ -173,10 +253,13 @@ std::vector<uint8_t> YuanRongStoreBackend::batch_get(
                     bridge_buffers.data(),
                     statuses.data(),
                     raw_keys.size())) {
+    const char* error = last_error_locked();
     LOG(ERROR) << "YuanRong store MGet failed for " << keys.size()
-               << " keys: " << last_error_locked();
+               << " keys: " << error;
+    call.fail(error);
     return std::vector<uint8_t>(keys.size(), /*value=*/0);
   }
+  call.succeed();
   return statuses;
 }
 

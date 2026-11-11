@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "core/kv_cache/transfer/kv_cache_store_backend.h"
 #include "core/kv_cache/transfer/store_config_validation.h"
+#include "core/kv_cache/transfer/store_metrics.h"
 
 namespace xllm {
 
@@ -72,6 +73,12 @@ class YuanRongStoreBackend final : public KVCacheStoreBackend {
   // instead of on the first put.
   bool initialize();
 
+  // Read-only view of the in-process call statistics, for tests and for
+  // re-test harnesses that want p50/p99 without scraping log lines.
+  StoreCallMetrics::Snapshot store_metrics() const {
+    return metrics_.snapshot();
+  }
+
  private:
   // Mirrors XllmYrStoreBuffer in yuanrong_store_bridge.cpp. Declared here so
   // the dlopen function-pointer types match the ABI exactly instead of being
@@ -118,6 +125,7 @@ class YuanRongStoreBackend final : public KVCacheStoreBackend {
   // client creation) until the E1 concurrency experiment settles whether a
   // per-thread client pays off.
   std::mutex bridge_mutex_;
+  mutable StoreCallMetrics metrics_;
   void* bridge_handle_ = nullptr;
   void* bridge_client_ = nullptr;
 
