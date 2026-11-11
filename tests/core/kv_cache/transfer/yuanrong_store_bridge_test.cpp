@@ -161,6 +161,23 @@ TEST_F(YuanRongStoreBridgeTest, ClampsNonPositiveRequestTimeout) {
   }
 }
 
+TEST_F(YuanRongStoreBridgeTest, CapsOversizedRequestTimeoutAtCreateTime) {
+  // A deployment that still passes the v3 script's 300000 ms must not be able
+  // to restore a minute-long stall. Assert on the real ConnectOptions handed
+  // to the SDK, not just on the pure normalizer.
+  for (const int32_t requested : {kMaxStoreRequestTimeoutMs + 1,
+                                  300000,
+                                  std::numeric_limits<int32_t>::max()}) {
+    datasystem::fake::reset();
+    xllm_yr_store_destroy(client_);
+    client_ = nullptr;
+    create("127.0.0.1", 31501, requested);
+    ASSERT_NE(client_, nullptr);
+    EXPECT_EQ(state().connect_options.requestTimeoutMs,
+              kMaxStoreRequestTimeoutMs);
+  }
+}
+
 TEST_F(YuanRongStoreBridgeTest, InitFailureIsReportedThroughLastError) {
   state().init_error = true;
   state().init_error_text = "worker unreachable";

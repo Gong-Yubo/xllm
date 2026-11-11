@@ -61,12 +61,32 @@ TEST(StoreConfigValidationTest, ClampsNonPositiveRequestTimeouts) {
       normalize_store_request_timeout_ms(std::numeric_limits<int32_t>::min()),
       kDefaultStoreRequestTimeoutMs);
 
-  // Positive values are deliberate user choices and pass through untouched.
+  // In-range positive values are deliberate user choices and pass through.
   EXPECT_EQ(normalize_store_request_timeout_ms(1), 1);
   EXPECT_EQ(normalize_store_request_timeout_ms(1234), 1234);
+  EXPECT_EQ(normalize_store_request_timeout_ms(kMaxStoreRequestTimeoutMs - 1),
+            kMaxStoreRequestTimeoutMs - 1);
+}
+
+TEST(StoreConfigValidationTest, CapsOversizedRequestTimeouts) {
+  static_assert(kDefaultStoreRequestTimeoutMs <= kMaxStoreRequestTimeoutMs);
+  static_assert(normalize_store_request_timeout_ms(300000) ==
+                kMaxStoreRequestTimeoutMs);
+  static_assert(
+      normalize_store_request_timeout_ms(std::numeric_limits<int32_t>::max()) ==
+      kMaxStoreRequestTimeoutMs);
+
+  // The v3 deployment scripts passed 300000 explicitly, which bypassed the
+  // 500 ms default entirely. Without an upper bound the 60 s stall returns.
+  EXPECT_EQ(normalize_store_request_timeout_ms(kMaxStoreRequestTimeoutMs),
+            kMaxStoreRequestTimeoutMs);
+  EXPECT_EQ(normalize_store_request_timeout_ms(kMaxStoreRequestTimeoutMs + 1),
+            kMaxStoreRequestTimeoutMs);
+  EXPECT_EQ(normalize_store_request_timeout_ms(300000),
+            kMaxStoreRequestTimeoutMs);
   EXPECT_EQ(
       normalize_store_request_timeout_ms(std::numeric_limits<int32_t>::max()),
-      std::numeric_limits<int32_t>::max());
+      kMaxStoreRequestTimeoutMs);
 }
 
 }  // namespace

@@ -115,7 +115,9 @@ std::string flatten(const XllmYrStoreBuffer& buffer) {
 // "wait for the object to become ready" argument: DataSystem 9.9.9 dropped
 // that third Get parameter, and the 0.9.3 default (0) means waiting without
 // a deadline. A non-positive value would therefore reintroduce the
-// minute-long stalls seen in the v4 test, so clamp it to the shared default.
+// minute-long stalls seen in the v4 test, and so would a very large positive
+// one (the v3 deployment scripts used 300000). Clamp both ends to the shared
+// [1, kMaxStoreRequestTimeoutMs] policy.
 extern "C" __attribute__((visibility("default"))) void* xllm_yr_store_create(
     const char* host,
     int32_t port,

@@ -31,7 +31,8 @@ struct YuanRongStoreConfig {
   // Upper bound on one store request, not a connection timeout and not a
   // "wait until the object is ready" deadline. A cache miss must fail fast:
   // the v4 test showed 60 s stalls when this value was also used as the
-  // per-call Get sub-timeout. The bridge applies the same normalizer.
+  // per-call Get sub-timeout. The bridge applies the same normalizer, which
+  // also caps oversized values at kMaxStoreRequestTimeoutMs.
   int32_t timeout_ms = kDefaultStoreRequestTimeoutMs;
   // Path to libxllm_yuanrong_store_bridge.so. Empty means the default
   // library name, resolved through the loader path.

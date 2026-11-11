@@ -363,7 +363,7 @@ TEST(YuanRongStoreBackendTest, DefaultRequestTimeoutIsBounded) {
   const YuanRongStoreConfig config{};
   EXPECT_EQ(config.timeout_ms, kDefaultStoreRequestTimeoutMs);
   EXPECT_TRUE(config.timeout_ms > 0);
-  EXPECT_TRUE(config.timeout_ms <= 1000);
+  EXPECT_TRUE(config.timeout_ms <= kMaxStoreRequestTimeoutMs);
 }
 
 }  // namespace

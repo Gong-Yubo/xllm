@@ -43,8 +43,21 @@ inline bool is_valid_yuanrong_port(int32_t port) {
 // that caused the minute-long stalls in the v4 test.
 inline constexpr int32_t kDefaultStoreRequestTimeoutMs = 500;
 
+// Upper bound for the same deadline. The v3 deployment scripts passed
+// 300000 ms explicitly, which would bypass the 500 ms default and bring the
+// 60 s stall back even after the default was fixed. Keep some headroom for a
+// healthy cross-node read, but never let a single prefetch call hold a thread
+// for a minute.
+inline constexpr int32_t kMaxStoreRequestTimeoutMs = 5000;
+static_assert(kDefaultStoreRequestTimeoutMs > 0 &&
+              kDefaultStoreRequestTimeoutMs <= kMaxStoreRequestTimeoutMs);
+
 constexpr int32_t normalize_store_request_timeout_ms(int32_t requested_ms) {
-  return requested_ms > 0 ? requested_ms : kDefaultStoreRequestTimeoutMs;
+  if (requested_ms <= 0) {
+    return kDefaultStoreRequestTimeoutMs;
+  }
+  return requested_ms > kMaxStoreRequestTimeoutMs ? kMaxStoreRequestTimeoutMs
+                                                  : requested_ms;
 }
 
 }  // namespace xllm

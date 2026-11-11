@@ -74,7 +74,10 @@ DEFINE_int32(store_yuanrong_port,
 DEFINE_int32(store_yuanrong_timeout_ms,
              500,
              "Upper bound on one YuanRong store request, in milliseconds. "
-             "A cache miss must fail fast; connect timeout is separate.");
+             "Non-positive values fall back to the bounded default and values "
+             "above kMaxStoreRequestTimeoutMs are clamped, so a stale large "
+             "deployment value cannot restore minute-long stalls. The connect "
+             "timeout is separate; a cache miss must fail fast.");
 
 DEFINE_string(store_yuanrong_bridge_path,
               "",
