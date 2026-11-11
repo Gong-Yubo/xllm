@@ -196,8 +196,13 @@ extern "C" __attribute__((visibility("default"))) bool xllm_yr_store_mset(
     // L2 cache", NONE_L2_CACHE_EVICT is an *evictable* write in the 0.9.3
     // headers. It is a suspect for the all-miss behaviour of the v4 32K run.
     // Deliberately unchanged here: switching write modes needs a real-cluster
-    // A/B over the four modes before an assumption is baked into a CLI flag
-    // (design decision D5). Do not read this comment as an endorsement.
+    // A/B before an assumption is baked into a CLI flag (design decision D5).
+    // A 0.9.3 single-worker simulation narrowed that A/B: with the worker's
+    // default L2_cache_type=none, WRITE_THROUGH_L2_CACHE, WRITE_BACK_L2_CACHE
+    // and WRITE_BACK_L2_CACHE_EVICT are rejected with "Invalid parameter",
+    // leaving only NONE_L2_CACHE and NONE_L2_CACHE_EVICT comparable unless the
+    // deployment configures an L2 cache first. Do not read this comment as an
+    // endorsement of the current mode either way.
     param.writeMode = datasystem::WriteMode::NONE_L2_CACHE_EVICT;
     // NX leaves an existing object alone and still reports success, so
     // re-publishing a block costs nothing. Keys are content hashes, so the
