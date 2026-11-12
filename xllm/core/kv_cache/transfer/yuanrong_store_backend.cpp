@@ -284,7 +284,24 @@ bool YuanRongStoreBackend::load_bridge() {
   const std::string library = config_.bridge_path.empty()
                                   ? std::string(kDefaultBridgeLibrary)
                                   : config_.bridge_path;
-  bridge_handle_ = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
+  // The bridge links libdatasystem, which bundles its own copies of gflags
+  // (and glog/absl/protobuf). The main binary is built with
+  // -Wl,--export-dynamic (cmake/native_extension.cmake), so a plain dlopen lets
+  // the bundled gflags symbols interpose onto the main process's registry and
+  // re-register the built-in flags, aborting at startup with
+  // "flag 'flagfile' was defined more than once".
+  //
+  // RTLD_DEEPBIND makes the bridge and its dependencies resolve symbols against
+  // libdatasystem's own copies first, so the bundled gflags register into their
+  // own registry and no longer collide with the main process. Unlike
+  // dlmopen(LM_ID_NEWLM) it does not create a new linker namespace, so
+  // libc/libstdc++ stay shared and the cross-namespace malloc/free mismatch
+  // (the v5 free(): invalid pointer crash) cannot happen.
+  int dlopen_flags = RTLD_NOW | RTLD_LOCAL;
+#ifdef RTLD_DEEPBIND
+  dlopen_flags |= RTLD_DEEPBIND;
+#endif
+  bridge_handle_ = dlopen(library.c_str(), dlopen_flags);
   if (bridge_handle_ == nullptr) {
     LOG(ERROR) << "Failed to load the YuanRong store bridge " << library
                << " (set store_yuanrong_bridge_path to override): "
