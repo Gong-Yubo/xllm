@@ -12,6 +12,34 @@ option(USE_ETCD "Build Mooncake etcd support" ON)
 option(STORE_USE_ETCD "Build Mooncake Store etcd support" ${USE_ETCD})
 # xlite is an opt-in NPU backend; it requires USE_NPU=ON.
 option(USE_XLITE "Enable xlite NPU backend" OFF)
+option(USE_YUANRONG "Build the YuanRong KV cache store backend" OFF)
+set(YUANRONG_ROOT "" CACHE PATH "YuanRong SDK install prefix")
+if(USE_YUANRONG)
+  add_compile_definitions(USE_YUANRONG)
+
+  if(YUANRONG_ROOT STREQUAL "")
+    message(FATAL_ERROR
+      "Please set -DYUANRONG_ROOT=/path/to/datasystem.")
+  endif()
+
+  find_path(YUANRONG_INCLUDE_DIR
+    NAMES datasystem/kv_client.h
+    PATHS "${YUANRONG_ROOT}/include"
+    NO_DEFAULT_PATH
+  )
+  find_library(YUANRONG_LIBRARY
+    NAMES datasystem
+    PATHS "${YUANRONG_ROOT}/lib" "${YUANRONG_ROOT}/lib64"
+    NO_DEFAULT_PATH
+  )
+  if(NOT YUANRONG_INCLUDE_DIR OR NOT YUANRONG_LIBRARY)
+    message(FATAL_ERROR
+      "Failed to find the YuanRong SDK under ${YUANRONG_ROOT}. "
+      "Need include/datasystem/kv_client.h and lib/libdatasystem.so.")
+  endif()
+  get_filename_component(YUANRONG_LIB_DIR
+    "${YUANRONG_LIBRARY}" DIRECTORY)
+endif()
 add_compile_definitions(YLT_ENABLE_IBV)
 add_definitions(-DYLT_ENABLE_IBV)
 set(YLT_ENABLE_IBV ON)

@@ -37,6 +37,10 @@ DEFINE_double(host_blocks_factor,
 
 DEFINE_bool(enable_kvcache_store, false, "Whether to use kvcache store.");
 
+DEFINE_string(store_backend,
+              "mooncake",
+              "KV cache store backend(e.g. mooncake, yuanrong).");
+
 DEFINE_string(store_protocol,
               "tcp",
               "KV cache store protocol(e.g. tcp, rdma).");
@@ -58,6 +62,28 @@ DEFINE_string(store_local_hostname,
               "",
               "The local host name of the kv cache store client.");
 
+DEFINE_string(store_yuanrong_host,
+              "",
+              "YuanRong worker host for store_backend=yuanrong; empty uses "
+              "127.0.0.1.");
+
+DEFINE_int32(store_yuanrong_port,
+             0,
+             "YuanRong worker port for store_backend=yuanrong.");
+
+DEFINE_int32(store_yuanrong_timeout_ms,
+             500,
+             "Upper bound on one YuanRong store request, in milliseconds. "
+             "Non-positive values fall back to the bounded default and values "
+             "above kMaxStoreRequestTimeoutMs are clamped, so a stale large "
+             "deployment value cannot restore minute-long stalls. The connect "
+             "timeout is separate; a cache miss must fail fast.");
+
+DEFINE_string(store_yuanrong_bridge_path,
+              "",
+              "Path to libxllm_yuanrong_store_bridge.so; empty uses the loader "
+              "search path.");
+
 DEFINE_bool(enable_control_h2d_block_num,
             false,
             "Whether to control h2d copy block num.");
@@ -70,11 +96,16 @@ void KVCacheStoreConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(layers_wise_copy_batchs);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(host_blocks_factor);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_kvcache_store);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(store_backend);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(store_protocol);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(store_rdma_devices);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(store_master_server_address);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(store_metadata_server);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(store_local_hostname);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(store_yuanrong_host);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(store_yuanrong_port);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(store_yuanrong_timeout_ms);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(store_yuanrong_bridge_path);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_control_h2d_block_num);
 }
 
@@ -84,11 +115,16 @@ void KVCacheStoreConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(layers_wise_copy_batchs);
   XLLM_CONFIG_ASSIGN_FROM_JSON(host_blocks_factor);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_kvcache_store);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(store_backend);
   XLLM_CONFIG_ASSIGN_FROM_JSON(store_protocol);
   XLLM_CONFIG_ASSIGN_FROM_JSON(store_rdma_devices);
   XLLM_CONFIG_ASSIGN_FROM_JSON(store_master_server_address);
   XLLM_CONFIG_ASSIGN_FROM_JSON(store_metadata_server);
   XLLM_CONFIG_ASSIGN_FROM_JSON(store_local_hostname);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(store_yuanrong_host);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(store_yuanrong_port);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(store_yuanrong_timeout_ms);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(store_yuanrong_bridge_path);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_control_h2d_block_num);
 }
 
@@ -106,6 +142,8 @@ void KVCacheStoreConfig::append_config_json(
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_kvcache_store);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, store_backend);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, store_protocol);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, store_rdma_devices);
@@ -115,6 +153,14 @@ void KVCacheStoreConfig::append_config_json(
       config_json, default_config, store_metadata_server);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, store_local_hostname);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, store_yuanrong_host);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, store_yuanrong_port);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, store_yuanrong_timeout_ms);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, store_yuanrong_bridge_path);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_control_h2d_block_num);
 }
